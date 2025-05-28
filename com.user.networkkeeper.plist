@@ -19,7 +19,7 @@
     <false/>
     
     <key>StartInterval</key>
-    <integer>60</integer>
+    <integer>30</integer>
     
     <key>StandardOutPath</key>
     <string>{{USER_HOME}}/.network_keeper_out.log</string>
