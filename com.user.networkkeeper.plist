@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.networkkeeper</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>{{NETWORK_KEEPER_SCRIPT_PATH}}</string>
+        <string>start</string>
+    </array>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <false/>
+    
+    <key>StartInterval</key>
+    <integer>60</integer>
+    
+    <key>StandardOutPath</key>
+    <string>{{USER_HOME}}/.network_keeper_out.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>{{USER_HOME}}/.network_keeper_err.log</string>
+    
+    <key>WorkingDirectory</key>
+    <string>{{USER_HOME}}</string>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <!-- Automatic restart on crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{USER_HOME}}</string>
+        <key>USER</key>
+        <string>{{USERNAME}}</string>
+    </dict>
+</dict>
+</plist>
