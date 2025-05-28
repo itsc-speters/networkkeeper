@@ -487,7 +487,7 @@ case "${1:-start}" in
             service_status=$(launchctl list | grep "com.user.networkkeeper" | awk '{print $1}')
             echo "✅ Network Keeper service is active"
             echo "   Last execution status: $service_status"
-            echo "   Service runs every 60 seconds via launchd"
+            echo "   Service runs every $CHECK_INTERVAL seconds via launchd"
             
             # Show recent log entries
             echo ""
