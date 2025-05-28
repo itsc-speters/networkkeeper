@@ -19,7 +19,7 @@ MOUNT_POINTS=(
 )
 
 # Settings
-CHECK_INTERVAL=60        # Check every 60 seconds
+CHECK_INTERVAL=30        # Check every 30 seconds
 MAX_LOG_SIZE=1048576    # 1MB
 
 # Credentials (optional - can also be managed via Keychain)

@@ -130,7 +130,7 @@ nk list
 Bearbeiten Sie `network_keeper.sh` um folgende Einstellungen zu ändern:
 
 ```bash
-CHECK_INTERVAL=60        # Überprüfungsintervall in Sekunden
+CHECK_INTERVAL=30        # Überprüfungsintervall in Sekunden
 MAX_LOG_SIZE=1048576    # Maximale Log-Dateigröße (1MB)
 ```
 
