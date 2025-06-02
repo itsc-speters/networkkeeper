@@ -25,8 +25,9 @@ sed -e "s|{{NETWORK_KEEPER_SCRIPT_PATH}}|$NETWORK_KEEPER_SCRIPT|g" \
 
 echo "✅ Files installed"
 
-# Create example configuration
-cat > "$HOME/.network_keeper_config" << 'EOF'
+# Create example configuration if it doesn't exist
+if [[ ! -f "$HOME/.network_keeper_config" ]]; then
+    cat > "$HOME/.network_keeper_config" << 'EOF'
 # Network Keeper Configuration
 # Add your network drives here
 
@@ -40,16 +41,15 @@ cat > "$HOME/.network_keeper_config" << 'EOF'
 #     "afp://server.local/backup"       # Will mount to /Volumes/backup
 # )
 EOF
-
-echo "✅ Configuration file created: $HOME/.network_keeper_config"
+    echo "✅ Configuration file created: $HOME/.network_keeper_config"
+else
+    echo "✅ Configuration file already exists: $HOME/.network_keeper_config"
+fi
 echo ""
 echo "⚠️ IMPORTANT: You must add at least one network drive before the service will work!"
 echo "   Use: $NETWORK_KEEPER_SCRIPT add 'smb://your-server/share'"
 echo ""
-echo "💡 TIPS:"
-echo "   - Mount points are automatically derived from share names"
-echo "   - Credentials are handled automatically via macOS Keychain"
-echo "   - Connect manually once via Finder to store credentials in Keychain"
+echo "💡 TIP: Connect manually once via Finder to store credentials in Keychain"
 
 # Register launchd service
 if launchctl list | grep -q "com.user.networkkeeper"; then
@@ -80,10 +80,6 @@ echo "   $NETWORK_KEEPER_SCRIPT status"
 echo ""
 echo "4. View logs:"
 echo "   $NETWORK_KEEPER_SCRIPT logs"
-echo ""
-echo "💡 Configuration is now automatic:"
-echo "   - Mount points: Derived from share names (e.g., 'share' → '/Volumes/share')"
-echo "   - Credentials: Via macOS Keychain (connect once manually in Finder)"
 echo ""
 echo "The service will start automatically on next login!"
 

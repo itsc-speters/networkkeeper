@@ -227,27 +227,64 @@ fi
 
 # Remove configuration and log files
 echo "3. Removing configuration and log files..."
-files_to_remove=(
-    "$CONFIG_FILE"
-    "$LOG_FILE"
-    "${LOG_FILE}.old"
-    "$PID_FILE"
-    "$OUT_LOG"
-    "$ERR_LOG"
-)
 
 removed_files=()
-for file in "${files_to_remove[@]}"; do
+
+# Handle configuration files
+config_files=("$CONFIG_FILE" "$PID_FILE")
+existing_config_files=()
+for file in "${config_files[@]}"; do
     if [[ -f "$file" ]]; then
-        if confirm "   Remove $file?"; then
+        existing_config_files+=("$file")
+    fi
+done
+
+if [[ ${#existing_config_files[@]} -gt 0 ]]; then
+    echo "   Found ${#existing_config_files[@]} configuration file(s):"
+    for file in "${existing_config_files[@]}"; do
+        echo "     - $(basename "$file")"
+    done
+    
+    if confirm "   Remove configuration files?"; then
+        for file in "${existing_config_files[@]}"; do
             rm -f "$file"
             removed_files+=("$file")
             echo "     ✅ Removed: $(basename "$file")"
-        else
-            echo "     ⏭️  Skipped: $(basename "$file")"
-        fi
+        done
+    else
+        echo "     ⏭️  Configuration files skipped"
+    fi
+else
+    echo "   ℹ️  No configuration files found"
+fi
+
+# Handle log files
+log_files=("$LOG_FILE" "${LOG_FILE}.old" "$OUT_LOG" "$ERR_LOG")
+existing_log_files=()
+for file in "${log_files[@]}"; do
+    if [[ -f "$file" ]]; then
+        existing_log_files+=("$file")
     fi
 done
+
+if [[ ${#existing_log_files[@]} -gt 0 ]]; then
+    echo "   Found ${#existing_log_files[@]} log file(s):"
+    for file in "${existing_log_files[@]}"; do
+        echo "     - $(basename "$file")"
+    done
+    
+    if confirm "   Remove all log files?"; then
+        for file in "${existing_log_files[@]}"; do
+            rm -f "$file"
+            removed_files+=("$file")
+            echo "     ✅ Removed: $(basename "$file")"
+        done
+    else
+        echo "     ⏭️  Log files skipped"
+    fi
+else
+    echo "   ℹ️  No log files found"
+fi
 
 # Remove alias from shell configuration
 echo "4. Removing shell alias..."
@@ -347,8 +384,9 @@ else
 fi
 
 # Check remaining files
+all_files_to_check=("$CONFIG_FILE" "$LOG_FILE" "${LOG_FILE}.old" "$PID_FILE" "$OUT_LOG" "$ERR_LOG")
 remaining_files=()
-for file in "${files_to_remove[@]}"; do
+for file in "${all_files_to_check[@]}"; do
     if [[ -f "$file" ]]; then
         remaining_files+=("$file")
     fi
