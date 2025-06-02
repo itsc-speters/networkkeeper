@@ -17,9 +17,10 @@ echo "==============================="
 # Function to ask for confirmation
 confirm() {
     local message="$1"
-    echo -n "$message (y/N): "
+    echo -n "$message (Y/n): "
     read -r response
-    [[ "$response" =~ ^[Yy]$ ]]
+    # Default to Y if empty response, or if response starts with Y/y
+    [[ -z "$response" ]] || [[ "$response" =~ ^[Yy] ]]
 }
 
 # Function to kill processes by pattern
