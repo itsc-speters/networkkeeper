@@ -272,50 +272,6 @@ echo "=== Standard Output ==="; tail -10 ~/.network_keeper_out.log
 echo "=== Fehler ==="; tail -10 ~/.network_keeper_err.log
 ```
 
-### Log-Dateien verstehen
-
-Network Keeper verwendet drei verschiedene Log-Dateien, die jeweils unterschiedliche Informationen enthalten:
-
-#### 📋 `.network_keeper.log` (Hauptanwendungslog)
-
-- **Zweck**: Detaillierte Anwendungslogik mit Zeitstempeln
-- **Erstellt von**: `log_message()` Funktion im Skript
-- **Enthält**:
-  - Verbindungsversuche und -status
-  - Mount/Unmount Aktivitäten
-  - Fehlerdetails und Debug-Informationen
-  - Zeitgestempelte Ereignisse
-- **Beispiel**: `[2025-06-02 10:30:15] Attempting to connect to smb://server/share...`
-
-#### 📤 `.network_keeper_out.log` (Standard-Output)
-
-- **Zweck**: Standard-Ausgaben des launchd Services
-- **Erstellt von**: macOS launchd (konfiguriert in plist)
-- **Enthält**:
-  - Echo-Ausgaben vom Skript
-  - Status-Meldungen
-  - Normale Programmausgaben
-- **Beispiel**: `✅ Network Keeper cycle completed`
-
-#### ❌ `.network_keeper_err.log` (Fehler-Output)
-
-- **Zweck**: Fehlerausgaben des launchd Services
-- **Erstellt von**: macOS launchd (konfiguriert in plist)
-- **Enthält**:
-  - Systemfehler
-  - Skript-Fehler (stderr)
-  - Kritische Probleme
-- **Beispiel**: `/bin/zsh: command not found`
-
-**💡 Debugging-Tipp**: Für eine vollständige Problemanalyse prüfen Sie alle drei Log-Dateien:
-
-```bash
-# Schneller Überblick über alle Logs
-echo "=== Hauptlog ==="; tail -10 ~/.network_keeper.log
-echo "=== Standard Output ==="; tail -10 ~/.network_keeper_out.log  
-echo "=== Fehler ==="; tail -10 ~/.network_keeper_err.log
-```
-
 ### Debug-Modus
 
 Für detaillierte Fehleranalyse können Sie das Skript manuell ausführen:
