@@ -9,8 +9,9 @@ Ein automatisches Skript-System, das Verbindungen zu Netzlaufwerken auf macOS au
 - **Launchd Integration**: Startet automatisch beim Login
 - **Flexible Konfiguration**: Unterstützt SMB, AFP und andere Protokolle
 - **Logging**: Detaillierte Protokollierung aller Aktivitäten
-- **Keychain Support**: Verwendet macOS Keychain für sichere Anmeldedaten
+- **Automatische Keychain-Authentifizierung**: Verwendet macOS Keychain automatisch
 - **Einfache Verwaltung**: Kommandozeilen-Interface für alle Operationen
+- **Intelligente Mount-Punkte**: Automatische Ableitung der Mount-Punkte von Freigabe-Namen
 
 ## 🚀 Installation
 
@@ -70,27 +71,40 @@ nk logs
 
 ### Automatische Konfiguration
 
-Das Skript erstellt automatisch eine Konfigurationsdatei unter `~/.network_keeper_config`. Bearbeiten Sie diese Datei um Ihre Netzlaufwerke hinzuzufügen:
+Das Skript erstellt automatisch eine Konfigurationsdatei unter `~/.network_keeper_config`. Die Konfiguration ist sehr einfach - Sie müssen nur Ihre Netzlaufwerke hinzufügen:
 
 ```bash
-# Netzlaufwerke hinzufügen
-NETWORK_SHARES+=(
+# Network Keeper Konfiguration
+# Fügen Sie hier Ihre Netzlaufwerke hinzu
+
+# Netzlaufwerke
+NETWORK_SHARES=(
     "smb://server.local/documents"
     "smb://192.168.1.100/share"
     "afp://server.local/backup"
 )
-
-# Optional: Spezifische Mount-Punkte
-MOUNT_POINTS+=(
-    "/Volumes/Documents"
-    "/Volumes/Share"
-    "/Volumes/Backup"
-)
-
-# Anmeldedaten (optional)
-USERNAME="ihr_username"
-PASSWORD="ihr_password"
 ```
+
+**Wichtige Hinweise:**
+
+- **Mount-Punkte werden automatisch erstellt**: Der Mount-Punkt wird automatisch aus dem Freigabe-Namen abgeleitet (z.B. `smb://server/documents` → `/Volumes/documents`)
+- **Keychain-Authentifizierung**: Anmeldedaten werden automatisch über macOS Keychain verwaltet - keine manuelle Passwort-Konfiguration erforderlich
+
+### Beispiele für Mount-Punkte
+
+Das Skript leitet automatisch Mount-Punkte aus den Freigabe-Namen ab:
+
+```bash
+# Beispiele für automatische Mount-Punkt-Zuordnung:
+"smb://server.local/documents"    → "/Volumes/documents"
+"smb://192.168.1.100/share"       → "/Volumes/share"  
+"afp://server.local/backup"       → "/Volumes/backup"
+"smb://fileserver/HR-Files"       → "/Volumes/HR-Files"
+```
+
+**Fallback-Unterstützung:**
+
+Falls `/Volumes/` nicht verfügbar ist, verwendet das Skript automatisch `~/NetworkDrives/` als Fallback-Verzeichnis.
 
 ### Unterstützte Protokolle
 
@@ -122,6 +136,7 @@ nk list
 - Beim Entfernen wird automatisch ein Backup der Konfiguration erstellt
 - Die `remove` Funktion zeigt eine Liste verfügbarer Shares, falls der angegebene Share nicht gefunden wird
 - Entfernte Shares werden sofort aus der aktiven Überwachung genommen
+- Mount-Punkte werden automatisch aus den Freigabe-Namen abgeleitet
 
 ## 🔧 Erweiterte Einstellungen
 
@@ -135,6 +150,9 @@ MAX_LOG_SIZE=1048576    # Maximale Log-Dateigröße (1MB)
 ```
 
 **Hinweise:**
+
+- Mount-Punkte werden automatisch aus Freigabe-Namen erstellt und sind nicht konfigurierbar
+- Fallback-Verzeichnis `~/NetworkDrives/` wird automatisch verwendet wenn `/Volumes/` nicht verfügbar ist
 
 - Log-Dateien werden automatisch in `$HOME/.network_keeper.log` erstellt und sind nicht konfigurierbar
 - PID-Datei wird automatisch in `$HOME/.network_keeper.pid` erstellt und ist nicht konfigurierbar
@@ -164,16 +182,20 @@ cat ~/.network_keeper_err.log
 
 1. **Verbindung schlägt fehl:**
    - Prüfen Sie Netzwerkkonnektivität
-   - Überprüfen Sie Anmeldedaten
-   - Testen Sie manuelle Verbindung im Finder
+   - Stellen Sie sicher, dass Anmeldedaten in macOS Keychain gespeichert sind
+   - Testen Sie manuelle Verbindung im Finder (damit werden Keychain-Einträge erstellt)
 
 2. **Service startet nicht:**
    - Überprüfen Sie Dateiberechtigungen: `chmod +x network_keeper.sh`
    - Prüfen Sie Pfade in der plist-Datei
 
 3. **Mount-Punkt bereits verwendet:**
-   - Verwenden Sie spezifische Mount-Punkte in der Konfiguration
+   - Das Skript verwendet automatisch Fallback-Verzeichnisse
    - Entfernen Sie alte Mount-Punkte: `diskutil unmount /Volumes/Name`
+
+4. **Keychain-Probleme:**
+   - Verbinden Sie sich einmal manuell über Finder um Keychain-Einträge zu erstellen
+   - Prüfen Sie Keychain-Zugriff in den Systemeinstellungen
 
 ### Debug-Modus
 
@@ -186,22 +208,21 @@ zsh -x ./network_keeper.sh start
 
 ## 🛡️ Sicherheit
 
-- **Keychain**: Verwenden Sie macOS Keychain für Passwörter statt Klartext
+- **Automatische Keychain-Nutzung**: Das Skript verwendet automatisch macOS Keychain für alle Authentifizierungen
+- **Keine Klartext-Passwörter**: Anmeldedaten werden nie im Skript oder in Konfigurationsdateien gespeichert
 - **Berechtigungen**: Das Skript läuft nur mit Benutzerberechtigung
-- **Logs**: Enthalten keine Passwörter (nur bei expliziter Konfiguration)
+- **Sichere Logs**: Enthalten keine Passwörter oder sensible Daten
 
-### Keychain-Verwendung
+### Keychain-Integration
 
-Um Passwörter sicher zu speichern:
+Das Skript nutzt `osascript` für das Mounten von Netzlaufwerken, was automatisch die in macOS Keychain gespeicherten Anmeldedaten verwendet. Sie müssen nur einmal bei der ersten Verbindung zu einem Server Ihre Anmeldedaten eingeben - diese werden dann sicher in der Keychain gespeichert.
 
-```bash
-# Passwort in Keychain speichern
-security add-internet-password -s "server.local" -a "username" -w "password"
+**Vorteile der automatischen Keychain-Nutzung:**
 
-# Im Skript: USERNAME und PASSWORD leer lassen
-USERNAME=""
-PASSWORD=""
-```
+- Keine manuelle Passwort-Konfiguration erforderlich
+- Sichere Verschlüsselung durch macOS Keychain
+- Nahtlose Integration mit macOS-Sicherheitsrichtlinien
+- Automatische Aktualisierung bei Passwort-Änderungen über Keychain
 
 ## 📁 Dateistruktur
 

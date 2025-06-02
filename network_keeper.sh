@@ -11,20 +11,13 @@ NETWORK_SHARES=(
     # "afp://server.local/share2"
 )
 
-# Local mount points (optional - will be created automatically if empty)
-MOUNT_POINTS=(
-    # "/Volumes/NetworkDrive1"
-    # "/Volumes/Documents"
-    # "/Volumes/NetworkDrive2"
-)
-
 # Settings
 CHECK_INTERVAL=30        # Check every 30 seconds
 MAX_LOG_SIZE=1048576    # 1MB
 
-# Credentials (optional - can also be managed via Keychain)
-USERNAME=""
-PASSWORD=""
+# Note: Credentials are automatically handled via macOS Keychain when using osascript
+# USERNAME="" # No longer needed - osascript uses Keychain
+# PASSWORD="" # No longer needed - osascript uses Keychain
 
 # Functions
 log_message() {
@@ -89,25 +82,38 @@ mount_share() {
         fi
     fi
     
-    # Try different mount methods
-    local mount_cmd=""
+    # Use osascript to mount volume - this always uses Keychain authentication
     local mount_error=""
     
-    if [[ -n "$USERNAME" && -n "$PASSWORD" ]]; then
-        # With credentials
-        mount_cmd="mount_smbfs -o username=$USERNAME,password=$PASSWORD '$share' '$mount_point'"
-    else
-        # Without explicit credentials (uses Keychain or prompts)
-        mount_cmd="mount_smbfs '$share' '$mount_point'"
-    fi
-    
-    # Execute mount command and capture error
-    if mount_error=$(eval "$mount_cmd" 2>&1); then
-        log_message "✅ Successfully connected: $share -> $mount_point"
+    # Execute mount command using osascript and capture error
+    if mount_error=$(osascript -e "mount volume \"$share\"" 2>&1); then
+        log_message "✅ Successfully connected: $share (mounted via Keychain)"
+        
+        # Find where macOS actually mounted the share
+        local actual_mount_point=""
+        local share_name=$(basename "$share")
+        
+        # Check common mount locations
+        if [[ -d "/Volumes/$share_name" ]]; then
+            actual_mount_point="/Volumes/$share_name"
+        else
+            # Try to find the mount point by checking recent mount entries
+            actual_mount_point=$(mount | grep "$share" | awk '{print $3}' | head -1)
+        fi
+        
+        if [[ -n "$actual_mount_point" && "$actual_mount_point" != "$mount_point" ]]; then
+            log_message "   Mounted at: $actual_mount_point"
+            # Create a symlink if the expected mount point is different
+            if [[ ! -e "$mount_point" ]]; then
+                ln -sf "$actual_mount_point" "$mount_point" 2>/dev/null && \
+                log_message "   Created symlink: $mount_point -> $actual_mount_point"
+            fi
+        fi
+        
         return 0
     else
         # Log the specific error for debugging
-        log_message "❌ Error connecting: $share to $mount_point"
+        log_message "❌ Error connecting: $share"
         log_message "   Error details: $mount_error"
         log_message "   Will retry next cycle"
         
@@ -259,26 +265,8 @@ remove_network_share() {
         echo ")"
         echo ""
         
-        # Handle mount points if they exist
-        if [[ ${#MOUNT_POINTS[@]} -gt 0 ]]; then
-            echo "# Optional: Specific mount points"
-            echo "MOUNT_POINTS=("
-            for i in {1..${#MOUNT_POINTS[@]}}; do
-                if [[ $i -ne $index ]] && [[ -n "${MOUNT_POINTS[$i]:-}" ]]; then
-                    echo "    \"${MOUNT_POINTS[$i]}\""
-                fi
-            done
-            echo ")"
-            echo ""
-        fi
-        
-        # Preserve other configuration like USERNAME/PASSWORD
-        if grep -q "^USERNAME=" "$HOME/.network_keeper_config"; then
-            grep "^USERNAME=" "$HOME/.network_keeper_config"
-        fi
-        if grep -q "^PASSWORD=" "$HOME/.network_keeper_config"; then
-            grep "^PASSWORD=" "$HOME/.network_keeper_config"
-        fi
+        # Note: USERNAME/PASSWORD no longer preserved since osascript uses Keychain
+        # Other configuration settings can be added here if needed in the future
     } > "$temp_file"
     
     # Replace the configuration file
@@ -299,9 +287,8 @@ remove_network_share() {
 }
 
 load_config() {
-    # Reset arrays to avoid duplicates
+    # Reset array to avoid duplicates
     NETWORK_SHARES=()
-    MOUNT_POINTS=()
     
     # Load additional configuration if available
     if [[ -f "$HOME/.network_keeper_config" ]]; then
@@ -320,18 +307,10 @@ main_loop() {
     fi
     
     # Iterate through all shares
-    local share_index=1
     for share in "${NETWORK_SHARES[@]}"; do
-        mount_point=""
-        
-        # Determine mount point
-        if [[ ${#MOUNT_POINTS[@]} -gt 0 && -n "${MOUNT_POINTS[$share_index]:-}" ]]; then
-            mount_point="${MOUNT_POINTS[$share_index]}"
-        else
-            # Derive automatic mount point from share name
-            share_name=$(basename "$share")
-            mount_point="/Volumes/$share_name"
-        fi
+        # Always derive mount point from share name
+        share_name=$(basename "$share")
+        mount_point="/Volumes/$share_name"
         
         # Check connection and restore if necessary
         if ! check_mount "$share" "$mount_point"; then
@@ -348,9 +327,6 @@ main_loop() {
                 fi
             fi
         fi
-        
-        # Increment share index for mount point matching
-        ((share_index++))
     done
     
     log_message "Network Keeper cycle completed"
@@ -523,19 +499,13 @@ case "${1:-start}" in
             exit 1
         fi
         
-        local share_index=1
+        local test_counter=1
         for share in "${NETWORK_SHARES[@]}"; do
             echo "Testing: $share"
             
-            # Determine expected mount point
-            mount_point=""
-            if [[ ${#MOUNT_POINTS[@]} -gt 0 && -n "${MOUNT_POINTS[$share_index]:-}" ]]; then
-                mount_point="${MOUNT_POINTS[$share_index]}"
-            else
-                # Derive automatic mount point from share name
-                share_name=$(basename "$share")
-                mount_point="/Volumes/$share_name"
-            fi
+            # Always derive mount point from share name
+            share_name=$(basename "$share")
+            mount_point="/Volumes/$share_name"
             
             # Check if already mounted at the expected location
             actual_mount_point=""
@@ -568,7 +538,7 @@ case "${1:-start}" in
                 fi
                 echo "   Attempting test connection..."
                 # Try to mount to a temporary location for testing
-                test_mount="/tmp/nk_test_$$_$share_index"
+                test_mount="/tmp/nk_test_$$_$test_counter"
                 if mount_share "$share" "$test_mount"; then
                     echo "✅ Test connection successful"
                     sleep 1
@@ -579,7 +549,7 @@ case "${1:-start}" in
                 fi
             fi
             echo ""
-            ((share_index++))
+            ((test_counter++))
         done
         ;;
         
