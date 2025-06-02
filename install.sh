@@ -30,29 +30,26 @@ cat > "$HOME/.network_keeper_config" << 'EOF'
 # Network Keeper Configuration
 # Add your network drives here
 
+# Mount points are automatically derived from share names
+# Credentials are automatically handled via macOS Keychain
+
 # Examples (remove the # to activate them):
-# NETWORK_SHARES+=(
-#     "smb://server.local/documents"
-#     "smb://192.168.1.100/share"
-#     "afp://server.local/backup"
+# NETWORK_SHARES=(
+#     "smb://server.local/documents"    # Will mount to /Volumes/documents
+#     "smb://192.168.1.100/share"       # Will mount to /Volumes/share
+#     "afp://server.local/backup"       # Will mount to /Volumes/backup
 # )
-
-# Optional: Specific mount points
-# MOUNT_POINTS+=(
-#     "/Volumes/Documents"
-#     "/Volumes/Share"
-#     "/Volumes/Backup"
-# )
-
-# Credentials (optional - leave empty to use Keychain)
-# USERNAME="your_username"
-# PASSWORD="your_password"
 EOF
 
 echo "✅ Configuration file created: $HOME/.network_keeper_config"
 echo ""
 echo "⚠️ IMPORTANT: You must add at least one network drive before the service will work!"
 echo "   Use: $NETWORK_KEEPER_SCRIPT add 'smb://your-server/share'"
+echo ""
+echo "💡 TIPS:"
+echo "   - Mount points are automatically derived from share names"
+echo "   - Credentials are handled automatically via macOS Keychain"
+echo "   - Connect manually once via Finder to store credentials in Keychain"
 
 # Register launchd service
 if launchctl list | grep -q "com.user.networkkeeper"; then
@@ -72,20 +69,21 @@ fi
 echo ""
 echo "📋 Next steps:"
 echo "=============="
-echo "1. Edit the configuration:"
-echo "   vim $HOME/.network_keeper_config"
-echo ""
-echo "2. Add your network drives:"
+echo "1. Add your network drives:"
 echo "   $NETWORK_KEEPER_SCRIPT add 'smb://your-server/share'"
 echo ""
-echo "3. Test the configuration:"
+echo "2. Test the configuration:"
 echo "   $NETWORK_KEEPER_SCRIPT test"
 echo ""
-echo "4. Check the status:"
+echo "3. Check the status:"
 echo "   $NETWORK_KEEPER_SCRIPT status"
 echo ""
-echo "5. View logs:"
+echo "4. View logs:"
 echo "   $NETWORK_KEEPER_SCRIPT logs"
+echo ""
+echo "💡 Configuration is now automatic:"
+echo "   - Mount points: Derived from share names (e.g., 'share' → '/Volumes/share')"
+echo "   - Credentials: Via macOS Keychain (connect once manually in Finder)"
 echo ""
 echo "The service will start automatically on next login!"
 
