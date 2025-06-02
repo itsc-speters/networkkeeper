@@ -155,26 +155,33 @@ cleanup_sigint() {
 }
 
 show_usage() {
+    local script_name="${BASH_SOURCE[1]##*/}"
+    [[ -z "$script_name" ]] && script_name="network_keeper.sh"
     cat << EOF
 Network Drive Keeper - Maintains connections to network drives
 
-Usage: $0 [OPTIONS]
+Usage: $script_name [OPTIONS]
 
 OPTIONS:
-    start           Runs one check cycle (used by launchd)
-    daemon          Starts the daemon in infinite loop mode
-    stop            Stops the daemon
-    status          Shows the status
-    test            Tests the configuration
-    add <share>     Adds a network drive
-    remove <share>  Removes a network drive
-    list            Shows configured drives
-    logs            Shows recent log entries
+    start             Starts the service if needed, or runs one check cycle
+    daemon            Starts the daemon in infinite loop mode
+    stop              Stops the service and all processes
+    restart           Restarts the launchd service
+    status            Shows the status
+    test              Tests the configuration
+    add <share>       Adds a network drive
+    remove <share>    Removes a network drive
+    list              Shows configured drives
+    logs              Shows recent log entries
+    service <cmd>     Manages the launchd service (start|stop|restart|status)
 
 EXAMPLES:
-    $0 daemon
-    $0 add "smb://server.local/documents"
-    $0 status
+    $script_name daemon
+    $script_name add "smb://server.local/documents"
+    $script_name status
+    $script_name stop
+    $script_name restart
+    $script_name service status
 
 EOF
 }
@@ -335,6 +342,20 @@ main_loop() {
 # Main program
 case "${1:-start}" in
     start)
+        # Check if launchd service is running first
+        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+        if [[ -f "$INSTALLED_PLIST" ]] && ! launchctl list | grep -q "com.user.networkkeeper"; then
+            echo "📡 Starting Network Keeper service..."
+            launchctl load "$INSTALLED_PLIST"
+            if launchctl list | grep -q "com.user.networkkeeper"; then
+                echo "✅ Service started - monitoring will begin automatically"
+                exit 0
+            else
+                echo "❌ Failed to start service"
+                exit 1
+            fi
+        fi
+        
         load_config
         if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
             echo "⚠️ No network drives configured!"
@@ -404,7 +425,28 @@ case "${1:-start}" in
     stop)
         stopped_any=false
         
-        # First try to stop the process from the PID file
+        # First, unload the launchd service to prevent it from restarting processes
+        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+        if [[ -f "$INSTALLED_PLIST" ]]; then
+            if launchctl list | grep -q "com.user.networkkeeper"; then
+                echo "Unloading launchd service..."
+                launchctl unload "$INSTALLED_PLIST" 2>/dev/null
+                sleep 1
+                
+                if launchctl list | grep -q "com.user.networkkeeper"; then
+                    echo "⚠️ Service still active, force unloading..."
+                    launchctl remove com.user.networkkeeper 2>/dev/null
+                fi
+                stopped_any=true
+                echo "✅ Service unloaded from launchd"
+            else
+                echo "ℹ️ Service not currently loaded in launchd"
+            fi
+        else
+            echo "ℹ️ Service plist not found"
+        fi
+        
+        # Then stop any currently running processes
         if [[ -f "$HOME/.network_keeper.pid" ]]; then
             pid=$(cat "$HOME/.network_keeper.pid")
             if kill -0 "$pid" 2>/dev/null; then
@@ -414,7 +456,7 @@ case "${1:-start}" in
                     echo "Force killing PID: $pid"
                     kill -9 "$pid" 2>/dev/null
                 fi
-                echo "Network Keeper stopped (PID: $pid)"
+                echo "✅ Stopped process (PID: $pid)"
                 stopped_any=true
             fi
             rm -f "$HOME/.network_keeper.pid"
@@ -448,30 +490,46 @@ case "${1:-start}" in
                 kill -9 "$pid" 2>/dev/null
                 echo "  Force killed PID: $pid"
             done
+            stopped_any=true
+        fi
+        
+        # Final status check
+        if launchctl list | grep -q "com.user.networkkeeper"; then
+            echo "⚠️ Warning: Service may still be loaded in launchd"
         fi
         
         if [[ "$stopped_any" == "false" ]]; then
-            echo "❌ Network Keeper is not running"
+            echo "❌ Network Keeper was not running"
         else
-            echo "✅ All Network Keeper processes stopped"
+            echo "✅ Network Keeper completely stopped"
         fi
         ;;
         
     status)
-        # Check launchd service status
-        if launchctl list | grep -q "com.user.networkkeeper"; then
-            service_status=$(launchctl list | grep "com.user.networkkeeper" | awk '{print $1}')
-            echo "✅ Network Keeper service is active"
-            echo "   Last execution status: $service_status"
-            echo "   Service runs every $CHECK_INTERVAL seconds via launchd"
-            
-            # Show recent log entries
-            echo ""
-            echo "Recent activity:"
-            if [[ -f "$HOME/.network_keeper_out.log" ]]; then
-                tail -3 "$HOME/.network_keeper_out.log" | sed 's/^/   /'
+        # Check if service is installed first
+        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+        if [[ ! -f "$INSTALLED_PLIST" ]]; then
+            echo "❌ Network Keeper service is not installed"
+            echo "   Run './install.sh' to install the service"
+        else
+            # Service is installed, check if it's running
+            if launchctl list | grep -q "com.user.networkkeeper"; then
+                service_status=$(launchctl list | grep "com.user.networkkeeper" | awk '{print $1}')
+                echo "✅ Network Keeper service is active"
+                echo "   Last execution status: $service_status"
+                echo "   Service runs every $CHECK_INTERVAL seconds via launchd"
+                
+                # Show recent log entries
+                echo ""
+                echo "Recent activity:"
+                if [[ -f "$HOME/.network_keeper.log" ]]; then
+                    tail -3 "$HOME/.network_keeper.log" | sed 's/^/   /'
+                else
+                    echo "   No log file found"
+                fi
             else
-                echo "   No log file found"
+                echo "⚠️ Network Keeper service is installed but not running"
+                echo "   Use './network_keeper.sh start' or './network_keeper.sh service start' to start it"
             fi
             
             echo ""
@@ -484,9 +542,6 @@ case "${1:-start}" in
                     echo "   - $share"
                 done
             fi
-        else
-            echo "❌ Network Keeper service is not installed"
-            echo "   Run './install.sh' to install the service"
         fi
         ;;
         
@@ -576,6 +631,89 @@ case "${1:-start}" in
         else
             echo "No log file found at: $log_file_path"
         fi
+        ;;
+        
+    restart)
+        echo "Restarting Network Keeper..."
+        # Stop the service first
+        echo "Stopping service..."
+        $0 stop
+        sleep 2
+        
+        # Start the service again
+        echo "Starting service..."
+        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+        if [[ -f "$INSTALLED_PLIST" ]]; then
+            launchctl load "$INSTALLED_PLIST"
+            if launchctl list | grep -q "com.user.networkkeeper"; then
+                echo "✅ Network Keeper service restarted"
+            else
+                echo "❌ Failed to restart service"
+                exit 1
+            fi
+        else
+            echo "❌ Service not installed. Run './install.sh' first."
+            exit 1
+        fi
+        ;;
+        
+    service)
+        # Subcommand for service management
+        subcommand="${2:-}"
+        case "$subcommand" in
+            start)
+                INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+                if [[ -f "$INSTALLED_PLIST" ]]; then
+                    if launchctl list | grep -q "com.user.networkkeeper"; then
+                        echo "✅ Service is already running"
+                    else
+                        launchctl load "$INSTALLED_PLIST"
+                        if launchctl list | grep -q "com.user.networkkeeper"; then
+                            echo "✅ Service started"
+                        else
+                            echo "❌ Failed to start service"
+                            exit 1
+                        fi
+                    fi
+                else
+                    echo "❌ Service not installed. Run './install.sh' first."
+                    exit 1
+                fi
+                ;;
+            stop)
+                INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+                if launchctl list | grep -q "com.user.networkkeeper"; then
+                    launchctl unload "$INSTALLED_PLIST" 2>/dev/null
+                    if launchctl list | grep -q "com.user.networkkeeper"; then
+                        launchctl remove com.user.networkkeeper 2>/dev/null
+                    fi
+                    echo "✅ Service stopped"
+                else
+                    echo "ℹ️ Service is not running"
+                fi
+                ;;
+            restart)
+                $0 service stop
+                sleep 1
+                $0 service start
+                ;;
+            status)
+                if launchctl list | grep -q "com.user.networkkeeper"; then
+                    echo "✅ Service is running"
+                else
+                    echo "❌ Service is stopped"
+                fi
+                ;;
+            *)
+                echo "Usage: $0 service {start|stop|restart|status}"
+                echo ""
+                echo "Service commands:"
+                echo "  start    - Load the launchd service"
+                echo "  stop     - Unload the launchd service"  
+                echo "  restart  - Restart the launchd service"
+                echo "  status   - Check if service is loaded"
+                ;;
+        esac
         ;;
         
     *)

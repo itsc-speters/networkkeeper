@@ -32,11 +32,14 @@ Ein automatisches Skript-System, das Verbindungen zu Netzlaufwerken auf macOS au
 ### Grundlegende Befehle
 
 ```bash
-# Service starten
+# Service starten (startet den LaunchD Service falls nötig)
 ./network_keeper.sh start
 
-# Service stoppen
+# Service komplett stoppen (empfohlen)
 ./network_keeper.sh stop
+
+# Service neustarten
+./network_keeper.sh restart
 
 # Status prüfen
 ./network_keeper.sh status
@@ -57,11 +60,32 @@ Ein automatisches Skript-System, das Verbindungen zu Netzlaufwerken auf macOS au
 ./network_keeper.sh list
 ```
 
+### Service-Management
+
+```bash
+# LaunchD Service verwalten
+./network_keeper.sh service start    # Service laden
+./network_keeper.sh service stop     # Service entladen  
+./network_keeper.sh service restart  # Service neustarten
+./network_keeper.sh service status   # Service-Status prüfen
+```
+
+**Wichtiger Unterschied:**
+
+- `./network_keeper.sh start` - Startet den LaunchD Service falls er nicht läuft, ansonsten führt einen Überwachungszyklus aus
+- `./network_keeper.sh stop` - Stoppt Service UND alle laufenden Prozesse (empfohlen)
+- `./network_keeper.sh service stop` - Stoppt nur den LaunchD Service
+
+**Hinweis:** Der `start` Befehl erkennt automatisch, ob der LaunchD Service läuft und startet ihn bei Bedarf. Dies macht die Bedienung einfacher - Sie müssen sich keine Gedanken über den Service-Status machen.
+
 ### Mit Alias (nach Installation)
 
 ```bash
 # Kurze Befehle mit dem 'nk' Alias
+nk start
 nk status
+nk stop
+nk restart  
 nk add "smb://192.168.1.100/share"
 nk remove "smb://192.168.1.100/share"
 nk logs
