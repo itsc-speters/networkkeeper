@@ -178,15 +178,21 @@ MAX_LOG_SIZE=1048576    # Maximale Log-Dateigröße (1MB)
 - Mount-Punkte werden automatisch aus Freigabe-Namen erstellt und sind nicht konfigurierbar
 - Fallback-Verzeichnis `~/NetworkDrives/` wird automatisch verwendet wenn `/Volumes/` nicht verfügbar ist
 
-- Log-Dateien werden automatisch in `$HOME/.network_keeper.log` erstellt und sind nicht konfigurierbar
-- PID-Datei wird automatisch in `$HOME/.network_keeper.pid` erstellt und ist nicht konfigurierbar
+### Log-System
+
+Network Keeper verwendet drei verschiedene Log-Dateien für unterschiedliche Zwecke:
+
+- **`~/.network_keeper.log`** - Hauptanwendungslog mit timestamped Meldungen der Skript-Logik
+- **`~/.network_keeper_out.log`** - Standard-Output vom launchd Service (echo-Ausgaben, Status-Meldungen)
+- **`~/.network_keeper_err.log`** - Fehler-Output vom launchd Service (Fehlermeldungen, Warnungen)
+- **`~/.network_keeper.pid`** - Prozess-ID Datei (automatisch verwaltet)
 
 ### Automatischer Start
 
 Das Installationsskript registriert automatisch einen launchd Service, der beim Login startet. Die Konfiguration finden Sie in:
 
-- Service: `~/Library/LaunchAgents/com.user.networkkeeper.plist`
-- Logs: `~/.network_keeper_out.log` und `~/.network_keeper_err.log`
+- **Service**: `~/Library/LaunchAgents/com.user.networkkeeper.plist`
+- **Logs**: Drei getrennte Log-Dateien für verschiedene Zwecke (siehe Log-System oben)
 
 ## 🔍 Problembehandlung
 
@@ -196,10 +202,11 @@ Das Installationsskript registriert automatisch einen launchd Service, der beim 
 # Launchd Service Status
 launchctl list | grep networkkeeper
 
-# Logs anzeigen
-nk logs
-cat ~/.network_keeper_out.log
-cat ~/.network_keeper_err.log
+# Alle Logs anzeigen
+nk logs                              # Zeigt das Hauptanwendungslog
+cat ~/.network_keeper.log           # Hauptanwendungslog (Skript-Logik)
+cat ~/.network_keeper_out.log       # Standard-Output vom Service
+cat ~/.network_keeper_err.log       # Fehler-Output vom Service
 ```
 
 ### Häufige Probleme
@@ -220,6 +227,94 @@ cat ~/.network_keeper_err.log
 4. **Keychain-Probleme:**
    - Verbinden Sie sich einmal manuell über Finder um Keychain-Einträge zu erstellen
    - Prüfen Sie Keychain-Zugriff in den Systemeinstellungen
+
+### Log-Dateien verstehen
+
+Network Keeper verwendet drei verschiedene Log-Dateien, die jeweils unterschiedliche Informationen enthalten:
+
+#### 📋 `.network_keeper.log` (Hauptanwendungslog)
+
+- **Zweck**: Detaillierte Anwendungslogik mit Zeitstempeln
+- **Erstellt von**: `log_message()` Funktion im Skript
+- **Enthält**:
+  - Verbindungsversuche und -status
+  - Mount/Unmount Aktivitäten
+  - Fehlerdetails und Debug-Informationen
+  - Zeitgestempelte Ereignisse
+- **Beispiel**: `[2025-06-02 10:30:15] Attempting to connect to smb://server/share...`
+
+#### 📤 `.network_keeper_out.log` (Standard-Output)
+
+- **Zweck**: Standard-Ausgaben des launchd Services
+- **Erstellt von**: macOS launchd (konfiguriert in plist)
+- **Enthält**:
+  - Echo-Ausgaben vom Skript
+  - Status-Meldungen
+  - Normale Programmausgaben
+- **Beispiel**: `✅ Network Keeper cycle completed`
+
+#### ❌ `.network_keeper_err.log` (Fehler-Output)
+
+- **Zweck**: Fehlerausgaben des launchd Services
+- **Erstellt von**: macOS launchd (konfiguriert in plist)
+- **Enthält**:
+  - Systemfehler
+  - Skript-Fehler (stderr)
+  - Kritische Probleme
+- **Beispiel**: `/bin/zsh: command not found`
+
+**💡 Debugging-Tipp**: Für eine vollständige Problemanalyse prüfen Sie alle drei Log-Dateien:
+
+```bash
+# Schneller Überblick über alle Logs
+echo "=== Hauptlog ==="; tail -10 ~/.network_keeper.log
+echo "=== Standard Output ==="; tail -10 ~/.network_keeper_out.log  
+echo "=== Fehler ==="; tail -10 ~/.network_keeper_err.log
+```
+
+### Log-Dateien verstehen
+
+Network Keeper verwendet drei verschiedene Log-Dateien, die jeweils unterschiedliche Informationen enthalten:
+
+#### 📋 `.network_keeper.log` (Hauptanwendungslog)
+
+- **Zweck**: Detaillierte Anwendungslogik mit Zeitstempeln
+- **Erstellt von**: `log_message()` Funktion im Skript
+- **Enthält**:
+  - Verbindungsversuche und -status
+  - Mount/Unmount Aktivitäten
+  - Fehlerdetails und Debug-Informationen
+  - Zeitgestempelte Ereignisse
+- **Beispiel**: `[2025-06-02 10:30:15] Attempting to connect to smb://server/share...`
+
+#### 📤 `.network_keeper_out.log` (Standard-Output)
+
+- **Zweck**: Standard-Ausgaben des launchd Services
+- **Erstellt von**: macOS launchd (konfiguriert in plist)
+- **Enthält**:
+  - Echo-Ausgaben vom Skript
+  - Status-Meldungen
+  - Normale Programmausgaben
+- **Beispiel**: `✅ Network Keeper cycle completed`
+
+#### ❌ `.network_keeper_err.log` (Fehler-Output)
+
+- **Zweck**: Fehlerausgaben des launchd Services
+- **Erstellt von**: macOS launchd (konfiguriert in plist)
+- **Enthält**:
+  - Systemfehler
+  - Skript-Fehler (stderr)
+  - Kritische Probleme
+- **Beispiel**: `/bin/zsh: command not found`
+
+**💡 Debugging-Tipp**: Für eine vollständige Problemanalyse prüfen Sie alle drei Log-Dateien:
+
+```bash
+# Schneller Überblick über alle Logs
+echo "=== Hauptlog ==="; tail -10 ~/.network_keeper.log
+echo "=== Standard Output ==="; tail -10 ~/.network_keeper_out.log  
+echo "=== Fehler ==="; tail -10 ~/.network_keeper_err.log
+```
 
 ### Debug-Modus
 
@@ -259,10 +354,10 @@ Das Skript nutzt `osascript` für das Mounten von Netzlaufwerken, was automatisc
 └── README.md                      # Diese Dokumentation
 
 ~/.network_keeper_config            # Benutzerkonfiguration
-~/.network_keeper.log               # Aktivitätsprotokoll (feste Lokation)
-~/.network_keeper.pid               # Prozess-ID Datei (feste Lokation)
-~/.network_keeper_out.log           # Standard-Output Logs
-~/.network_keeper_err.log           # Fehler-Logs
+~/.network_keeper.log               # Hauptanwendungslog (Skript-Logik mit Zeitstempel)
+~/.network_keeper_out.log           # Standard-Output vom launchd Service
+~/.network_keeper_err.log           # Fehler-Output vom launchd Service
+~/.network_keeper.pid               # Prozess-ID Datei (automatisch verwaltet)
 ```
 
 ## 🔄 Deinstallation
@@ -309,7 +404,10 @@ Dieses Skript steht zur freien Verfügung.
 
 Bei Problemen prüfen Sie:
 
-1. Die Log-Dateien (`nk logs`)
+1. Die Log-Dateien:
+   - `nk logs` (Hauptanwendungslog)
+   - `cat ~/.network_keeper_out.log` (Service-Output)
+   - `cat ~/.network_keeper_err.log` (Fehler-Output)
 2. Die Netzwerkkonnektivität
 3. Die Konfiguration (`~/.network_keeper_config`)
 
