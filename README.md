@@ -19,13 +19,22 @@ Ein automatisches Skript-System, das Verbindungen zu Netzlaufwerken auf macOS au
 
    ```bash
    ./install.sh
-   ```
+   2. **Netzlaufwerke hinzufügen:**
 
-2. **Konfiguration anpassen:**
+      ```bash
+      # Einfach mit dem add-Befehl
+      ./network_keeper.sh add "smb://192.168.1.100/share"
+      ./network_keeper.sh add "smb://server.local/documents"
 
-   ```bash
-   vim ~/.network_keeper_config
-   ```
+      # Oder mit Alias (nach Installation)
+      nk add "smb://192.168.1.100/share"
+      ```
+
+      Alternativ können Sie die Konfiguration auch manuell bearbeiten:
+
+      ```bash
+      vim ~/.network_keeper_config
+      ```
 
 ## 📖 Verwendung
 
@@ -114,22 +123,6 @@ NETWORK_SHARES=(
 - **Mount-Punkte werden automatisch erstellt**: Der Mount-Punkt wird automatisch aus dem Freigabe-Namen abgeleitet (z.B. `smb://server/documents` → `/Volumes/documents`)
 - **Keychain-Authentifizierung**: Anmeldedaten werden automatisch über macOS Keychain verwaltet - keine manuelle Passwort-Konfiguration erforderlich
 
-### Beispiele für Mount-Punkte
-
-Das Skript leitet automatisch Mount-Punkte aus den Freigabe-Namen ab:
-
-```bash
-# Beispiele für automatische Mount-Punkt-Zuordnung:
-"smb://server.local/documents"    → "/Volumes/documents"
-"smb://192.168.1.100/share"       → "/Volumes/share"  
-"afp://server.local/backup"       → "/Volumes/backup"
-"smb://fileserver/HR-Files"       → "/Volumes/HR-Files"
-```
-
-**Fallback-Unterstützung:**
-
-Falls `/Volumes/` nicht verfügbar ist, verwendet das Skript automatisch `~/NetworkDrives/` als Fallback-Verzeichnis.
-
 ### Unterstützte Protokolle
 
 - **SMB/CIFS**: `smb://server/share`
@@ -211,22 +204,11 @@ cat ~/.network_keeper_err.log       # Fehler-Output vom Service
 
 ### Häufige Probleme
 
-1. **Verbindung schlägt fehl:**
-   - Prüfen Sie Netzwerkkonnektivität
-   - Stellen Sie sicher, dass Anmeldedaten in macOS Keychain gespeichert sind
-   - Testen Sie manuelle Verbindung im Finder (damit werden Keychain-Einträge erstellt)
+**Verbindung schlägt fehl:**
 
-2. **Service startet nicht:**
-   - Überprüfen Sie Dateiberechtigungen: `chmod +x network_keeper.sh`
-   - Prüfen Sie Pfade in der plist-Datei
-
-3. **Mount-Punkt bereits verwendet:**
-   - Das Skript verwendet automatisch Fallback-Verzeichnisse
-   - Entfernen Sie alte Mount-Punkte: `diskutil unmount /Volumes/Name`
-
-4. **Keychain-Probleme:**
-   - Verbinden Sie sich einmal manuell über Finder um Keychain-Einträge zu erstellen
-   - Prüfen Sie Keychain-Zugriff in den Systemeinstellungen
+- Prüfen Sie Netzwerkkonnektivität
+- Stellen Sie sicher, dass Anmeldedaten in macOS Keychain gespeichert sind
+- Testen Sie manuelle Verbindung im Finder (damit werden Keychain-Einträge erstellt)
 
 ### Log-Dateien verstehen
 
