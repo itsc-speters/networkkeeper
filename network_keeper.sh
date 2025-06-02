@@ -14,10 +14,26 @@ NETWORK_SHARES=(
 # Settings
 CHECK_INTERVAL=30        # Check every 30 seconds
 MAX_LOG_SIZE=1048576    # 1MB
+PLIST_PATH="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
+SERVICE_NAME="com.user.networkkeeper"
 
-# Note: Credentials are automatically handled via macOS Keychain when using osascript
-# USERNAME="" # No longer needed - osascript uses Keychain
-# PASSWORD="" # No longer needed - osascript uses Keychain
+# Note: Credentials are automatically handled via macOS Keychain
+
+# Helper functions
+is_service_running() {
+    launchctl list | grep -q "$SERVICE_NAME"
+}
+
+get_mount_point() {
+    local share="$1"
+    local share_name=$(basename "$share")
+    echo "/Volumes/$share_name"
+}
+
+get_fallback_mount_point() {
+    local mount_point="$1"
+    echo "$HOME/NetworkDrives/$(basename "$mount_point")"
+}
 
 # Functions
 log_message() {
@@ -51,7 +67,7 @@ check_mount() {
     else
         # Also check fallback location if the original was in /Volumes/
         if [[ "$mount_point" == /Volumes/* ]]; then
-            local fallback_point="$HOME/NetworkDrives/$(basename "$mount_point")"
+            local fallback_point=$(get_fallback_mount_point "$mount_point")
             if mount | grep -q "$fallback_point"; then
                 return 0  # Is mounted at fallback location
             fi
@@ -71,8 +87,7 @@ mount_share() {
         if ! mkdir -p "$mount_point" 2>/dev/null; then
             # If we can't create the mount point in /Volumes/, try a fallback location
             if [[ "$mount_point" == /Volumes/* ]]; then
-                local fallback_point="$HOME/NetworkDrives/$(basename "$mount_point")"
-                log_message "⚠️ Cannot create $mount_point, using fallback: $fallback_point"
+                local fallback_point=$(get_fallback_mount_point "$mount_point")
                 mount_point="$fallback_point"
                 mkdir -p "$mount_point" 2>/dev/null
             else
@@ -91,11 +106,11 @@ mount_share() {
         
         # Find where macOS actually mounted the share
         local actual_mount_point=""
-        local share_name=$(basename "$share")
+        local expected_mount_point=$(get_mount_point "$share")
         
         # Check common mount locations
-        if [[ -d "/Volumes/$share_name" ]]; then
-            actual_mount_point="/Volumes/$share_name"
+        if [[ -d "$expected_mount_point" ]]; then
+            actual_mount_point="$expected_mount_point"
         else
             # Try to find the mount point by checking recent mount entries
             actual_mount_point=$(mount | grep "$share" | awk '{print $3}' | head -1)
@@ -137,25 +152,13 @@ keep_alive_ping() {
 }
 
 cleanup() {
-    log_message "Network Keeper is shutting down... (signal received)"
-    rm -f "$HOME/.network_keeper.pid"
-    exit 0
-}
-
-cleanup_sigterm() {
-    log_message "Network Keeper is shutting down... (SIGTERM received)"
-    rm -f "$HOME/.network_keeper.pid"
-    exit 0
-}
-
-cleanup_sigint() {
-    log_message "Network Keeper is shutting down... (SIGINT received)"
+    log_message "Network Keeper is shutting down..."
     rm -f "$HOME/.network_keeper.pid"
     exit 0
 }
 
 show_usage() {
-    local script_name="${BASH_SOURCE[1]##*/}"
+    local script_name="${0##*/}"
     [[ -z "$script_name" ]] && script_name="network_keeper.sh"
     cat << EOF
 Network Drive Keeper - Maintains connections to network drives
@@ -272,7 +275,6 @@ remove_network_share() {
         echo ")"
         echo ""
         
-        # Note: USERNAME/PASSWORD no longer preserved since osascript uses Keychain
         # Other configuration settings can be added here if needed in the future
     } > "$temp_file"
     
@@ -316,8 +318,7 @@ main_loop() {
     # Iterate through all shares
     for share in "${NETWORK_SHARES[@]}"; do
         # Always derive mount point from share name
-        share_name=$(basename "$share")
-        mount_point="/Volumes/$share_name"
+        mount_point=$(get_mount_point "$share")
         
         # Check connection and restore if necessary
         if ! check_mount "$share" "$mount_point"; then
@@ -328,7 +329,7 @@ main_loop() {
             if [[ -d "$mount_point" ]] && mount | grep -q "$mount_point"; then
                 keep_alive_ping "$mount_point"
             elif [[ "$mount_point" == /Volumes/* ]]; then
-                local fallback_point="$HOME/NetworkDrives/$(basename "$mount_point")"
+                local fallback_point=$(get_fallback_mount_point "$mount_point")
                 if [[ -d "$fallback_point" ]] && mount | grep -q "$fallback_point"; then
                     keep_alive_ping "$fallback_point"
                 fi
@@ -343,11 +344,10 @@ main_loop() {
 case "${1:-start}" in
     start)
         # Check if launchd service is running first
-        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
-        if [[ -f "$INSTALLED_PLIST" ]] && ! launchctl list | grep -q "com.user.networkkeeper"; then
+        if [[ -f "$PLIST_PATH" ]] && ! is_service_running; then
             echo "📡 Starting Network Keeper service..."
-            launchctl load "$INSTALLED_PLIST"
-            if launchctl list | grep -q "com.user.networkkeeper"; then
+            launchctl load "$PLIST_PATH"
+            if is_service_running; then
                 echo "✅ Service started - monitoring will begin automatically"
                 exit 0
             else
@@ -408,8 +408,7 @@ case "${1:-start}" in
         fi
         
         # Signal handler for clean shutdown
-        trap cleanup_sigterm SIGTERM
-        trap cleanup_sigint SIGINT
+        trap cleanup SIGTERM SIGINT
         
         echo $$ > "$HOME/.network_keeper.pid"
         
@@ -426,16 +425,15 @@ case "${1:-start}" in
         stopped_any=false
         
         # First, unload the launchd service to prevent it from restarting processes
-        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
-        if [[ -f "$INSTALLED_PLIST" ]]; then
-            if launchctl list | grep -q "com.user.networkkeeper"; then
+        if [[ -f "$PLIST_PATH" ]]; then
+            if is_service_running; then
                 echo "Unloading launchd service..."
-                launchctl unload "$INSTALLED_PLIST" 2>/dev/null
+                launchctl unload "$PLIST_PATH" 2>/dev/null
                 sleep 1
                 
-                if launchctl list | grep -q "com.user.networkkeeper"; then
+                if is_service_running; then
                     echo "⚠️ Service still active, force unloading..."
-                    launchctl remove com.user.networkkeeper 2>/dev/null
+                    launchctl remove "$SERVICE_NAME" 2>/dev/null
                 fi
                 stopped_any=true
                 echo "✅ Service unloaded from launchd"
@@ -494,7 +492,7 @@ case "${1:-start}" in
         fi
         
         # Final status check
-        if launchctl list | grep -q "com.user.networkkeeper"; then
+        if is_service_running; then
             echo "⚠️ Warning: Service may still be loaded in launchd"
         fi
         
@@ -507,14 +505,13 @@ case "${1:-start}" in
         
     status)
         # Check if service is installed first
-        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
-        if [[ ! -f "$INSTALLED_PLIST" ]]; then
+        if [[ ! -f "$PLIST_PATH" ]]; then
             echo "❌ Network Keeper service is not installed"
             echo "   Run './install.sh' to install the service"
         else
             # Service is installed, check if it's running
-            if launchctl list | grep -q "com.user.networkkeeper"; then
-                service_status=$(launchctl list | grep "com.user.networkkeeper" | awk '{print $1}')
+            if is_service_running; then
+                service_status=$(launchctl list | grep "$SERVICE_NAME" | awk '{print $1}')
                 echo "✅ Network Keeper service is active"
                 echo "   Last execution status: $service_status"
                 echo "   Service runs every $CHECK_INTERVAL seconds via launchd"
@@ -559,8 +556,7 @@ case "${1:-start}" in
             echo "Testing: $share"
             
             # Always derive mount point from share name
-            share_name=$(basename "$share")
-            mount_point="/Volumes/$share_name"
+            mount_point=$(get_mount_point "$share")
             
             # Check if already mounted at the expected location
             actual_mount_point=""
@@ -570,7 +566,7 @@ case "${1:-start}" in
                 actual_mount_point="$mount_point"
             elif [[ "$mount_point" == /Volumes/* ]]; then
                 # Check fallback location
-                local fallback_point="$HOME/NetworkDrives/$(basename "$mount_point")"
+                local fallback_point=$(get_fallback_mount_point "$mount_point")
                 if mount | grep -q "$fallback_point"; then
                     actual_mount_point="$fallback_point"
                 fi
@@ -588,7 +584,7 @@ case "${1:-start}" in
                 echo "❌ Not mounted at expected location: $mount_point"
                 # Also check fallback location
                 if [[ "$mount_point" == /Volumes/* ]]; then
-                    local fallback_point="$HOME/NetworkDrives/$(basename "$mount_point")"
+                    local fallback_point=$(get_fallback_mount_point "$mount_point")
                     echo "❌ Not mounted at fallback location: $fallback_point"
                 fi
                 echo "   Attempting test connection..."
@@ -642,10 +638,9 @@ case "${1:-start}" in
         
         # Start the service again
         echo "Starting service..."
-        INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
-        if [[ -f "$INSTALLED_PLIST" ]]; then
-            launchctl load "$INSTALLED_PLIST"
-            if launchctl list | grep -q "com.user.networkkeeper"; then
+        if [[ -f "$PLIST_PATH" ]]; then
+            launchctl load "$PLIST_PATH"
+            if is_service_running; then
                 echo "✅ Network Keeper service restarted"
             else
                 echo "❌ Failed to restart service"
@@ -662,13 +657,12 @@ case "${1:-start}" in
         subcommand="${2:-}"
         case "$subcommand" in
             start)
-                INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
-                if [[ -f "$INSTALLED_PLIST" ]]; then
-                    if launchctl list | grep -q "com.user.networkkeeper"; then
+                if [[ -f "$PLIST_PATH" ]]; then
+                    if is_service_running; then
                         echo "✅ Service is already running"
                     else
-                        launchctl load "$INSTALLED_PLIST"
-                        if launchctl list | grep -q "com.user.networkkeeper"; then
+                        launchctl load "$PLIST_PATH"
+                        if is_service_running; then
                             echo "✅ Service started"
                         else
                             echo "❌ Failed to start service"
@@ -681,11 +675,10 @@ case "${1:-start}" in
                 fi
                 ;;
             stop)
-                INSTALLED_PLIST="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
-                if launchctl list | grep -q "com.user.networkkeeper"; then
-                    launchctl unload "$INSTALLED_PLIST" 2>/dev/null
-                    if launchctl list | grep -q "com.user.networkkeeper"; then
-                        launchctl remove com.user.networkkeeper 2>/dev/null
+                if is_service_running; then
+                    launchctl unload "$PLIST_PATH" 2>/dev/null
+                    if is_service_running; then
+                        launchctl remove "$SERVICE_NAME" 2>/dev/null
                     fi
                     echo "✅ Service stopped"
                 else
@@ -698,7 +691,7 @@ case "${1:-start}" in
                 $0 service start
                 ;;
             status)
-                if launchctl list | grep -q "com.user.networkkeeper"; then
+                if is_service_running; then
                     echo "✅ Service is running"
                 else
                     echo "❌ Service is stopped"
