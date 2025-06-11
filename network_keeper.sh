@@ -24,6 +24,14 @@ is_service_running() {
     launchctl list | grep -q "$SERVICE_NAME"
 }
 
+# Check if network is available before attempting mount operations
+is_network_available() {
+    # Simple ping test to check network connectivity
+    # Use a reliable DNS server (Google's) with a short timeout
+    ping -c 1 -W 2000 8.8.8.8 >/dev/null 2>&1
+    return $?
+}
+
 get_mount_point() {
     local share="$1"
     local share_name=$(basename "$share")
@@ -79,6 +87,12 @@ check_mount() {
 mount_share() {
     local share="$1"
     local mount_point="$2"
+    
+    # Check if network is available before attempting to mount
+    if ! is_network_available; then
+        log_message "⚠️ Network not available - skipping mount attempt for $share"
+        return 1
+    fi
     
     log_message "Attempting to connect to $share..."
     
