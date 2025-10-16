@@ -28,8 +28,13 @@ Fertig! 🎉
 nk add "smb://server/share"     # Share hinzufügen
 nk start                        # Service starten
 nk status                       # Status anzeigen
-nk logs                         # Letzte 20 Log-Einträge
 nk restart                      # Neustart
+```
+
+**Logs ansehen:**
+
+```bash
+tail -f ~/.network_keeper.log   # Live ansehen
 ```
 
 **Alles andere:**
@@ -56,8 +61,8 @@ nk                              # Zeigt alle Befehle
 **Logs ansehen:**
 
 ```bash
-nk logs                         # Letzte Einträge
 tail -f ~/.network_keeper.log   # Live ansehen
+tail -50 ~/.network_keeper.log  # Letzte 50 Zeilen
 ```
 
 **Häufige Probleme:**
