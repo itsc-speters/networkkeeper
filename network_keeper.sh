@@ -352,7 +352,7 @@ main_loop() {
 }
 
 # Main program
-case "${1:-start}" in
+case "${1:-}" in
     start)
         # Check if launchd service is running first
         if [[ -f "$PLIST_PATH" ]] && ! is_service_running; then
