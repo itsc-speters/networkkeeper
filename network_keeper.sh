@@ -28,8 +28,18 @@ is_service_running() {
 is_network_available() {
     # Simple ping test to check network connectivity
     # Use a reliable DNS server (Google's) with a short timeout
+    # -c 1: send 1 packet, -W 2000: 2 second timeout (in milliseconds on macOS)
     ping -c 1 -W 2000 8.8.8.8 >/dev/null 2>&1
-    return $?
+    local ping_result=$?
+    
+    # If ping fails, also check if we have any active network interfaces
+    if [[ $ping_result -ne 0 ]]; then
+        # Check if any network interface (excluding loopback) is active
+        ifconfig | grep -q "status: active" 2>/dev/null
+        return $?
+    fi
+    
+    return 0
 }
 
 get_mount_point() {
@@ -41,6 +51,34 @@ get_mount_point() {
 get_fallback_mount_point() {
     local mount_point="$1"
     echo "$HOME/NetworkDrives/$(basename "$mount_point")"
+}
+
+# Check if a network share host is reachable
+is_share_reachable() {
+    local share="$1"
+    
+    # Extract hostname/IP from share URL
+    # Examples: smb://server.local/share -> server.local
+    #          afp://192.168.1.100/docs -> 192.168.1.100
+    local host=""
+    
+    if [[ "$share" =~ ^[a-z]+://([^/]+) ]]; then
+        host="${BASH_REMATCH[1]}"
+        
+        # Remove username if present (user@host -> host)
+        host="${host##*@}"
+        
+        # Remove port if present (host:port -> host)
+        host="${host%%:*}"
+    else
+        # Cannot parse host from share
+        return 0  # Assume reachable if we can't parse
+    fi
+    
+    # Quick ping test with very short timeout
+    # -c 1: one packet, -t 2: 2 second timeout, -W 1000: 1 second wait
+    ping -c 1 -t 2 -W 1000 "$host" >/dev/null 2>&1
+    return $?
 }
 
 # Functions
@@ -94,6 +132,12 @@ mount_share() {
         return 1
     fi
     
+    # Check if the specific share host is reachable
+    if ! is_share_reachable "$share"; then
+        log_message "⚠️ Share host unreachable - skipping mount attempt for $share"
+        return 1
+    fi
+    
     log_message "Attempting to connect to $share..."
     
     # Create mount point if it doesn't exist
@@ -112,10 +156,15 @@ mount_share() {
     fi
     
     # Use osascript to mount volume - this always uses Keychain authentication
+    # Redirect both stdout and stderr to capture all output silently
     local mount_error=""
+    local mount_output=""
     
-    # Execute mount command using osascript and capture error
-    if mount_error=$(osascript -e "mount volume \"$share\"" 2>&1); then
+    # Execute mount command using osascript and suppress macOS system errors
+    mount_output=$(osascript -e "mount volume \"$share\"" 2>&1)
+    local mount_status=$?
+    
+    if [[ $mount_status -eq 0 ]]; then
         log_message "✅ Successfully connected: $share (mounted via Keychain)"
         
         # Find where macOS actually mounted the share
@@ -141,9 +190,8 @@ mount_share() {
         
         return 0
     else
-        # Log the specific error for debugging
-        log_message "❌ Error connecting: $share"
-        log_message "   Error details: $mount_error"
+        # Only log the error to our log file, don't show macOS system dialogs
+        log_message "❌ Error connecting: $share (resource may be unavailable)"
         log_message "   Will retry next cycle"
         
         # Clean up failed mount point if we created it
@@ -158,8 +206,21 @@ keep_alive_ping() {
     local mount_point="$1"
     
     # Small activity on the network drive to keep connection alive
+    # Suppress all error messages to avoid macOS system dialogs
     if [[ -d "$mount_point" ]]; then
-        ls "$mount_point" >/dev/null 2>&1
+        # Use timeout to prevent hanging on unresponsive network drives
+        ( 
+            # Run in subshell with timeout
+            ls "$mount_point" >/dev/null 2>&1 &
+            local ls_pid=$!
+            sleep 2
+            if kill -0 "$ls_pid" 2>/dev/null; then
+                kill -9 "$ls_pid" 2>/dev/null
+            fi
+            wait "$ls_pid" 2>/dev/null
+        )
+        
+        # Try to touch a keepalive file (silently fail if not writable)
         touch "$mount_point/.network_keeper_keepalive" 2>/dev/null
         rm "$mount_point/.network_keeper_keepalive" 2>/dev/null
     fi
@@ -331,24 +392,27 @@ main_loop() {
     
     # Iterate through all shares
     for share in "${NETWORK_SHARES[@]}"; do
-        # Always derive mount point from share name
-        mount_point=$(get_mount_point "$share")
-        
-        # Check connection and restore if necessary
-        if ! check_mount "$share" "$mount_point"; then
-            log_message "⚠️ Connection lost: $share"
-            mount_share "$share" "$mount_point"
-        else
-            # Send keep-alive signal - check both original and fallback locations
-            if [[ -d "$mount_point" ]] && mount | grep -q "$mount_point"; then
-                keep_alive_ping "$mount_point"
-            elif [[ "$mount_point" == /Volumes/* ]]; then
-                local fallback_point=$(get_fallback_mount_point "$mount_point")
-                if [[ -d "$fallback_point" ]] && mount | grep -q "$fallback_point"; then
-                    keep_alive_ping "$fallback_point"
+        # Wrap each share check in error handling to prevent one failure from stopping the loop
+        (
+            # Always derive mount point from share name
+            mount_point=$(get_mount_point "$share")
+            
+            # Check connection and restore if necessary
+            if ! check_mount "$share" "$mount_point"; then
+                log_message "⚠️ Connection lost: $share"
+                mount_share "$share" "$mount_point"
+            else
+                # Send keep-alive signal - check both original and fallback locations
+                if [[ -d "$mount_point" ]] && mount | grep -q "$mount_point"; then
+                    keep_alive_ping "$mount_point"
+                elif [[ "$mount_point" == /Volumes/* ]]; then
+                    local fallback_point=$(get_fallback_mount_point "$mount_point")
+                    if [[ -d "$fallback_point" ]] && mount | grep -q "$fallback_point"; then
+                        keep_alive_ping "$fallback_point"
+                    fi
                 fi
             fi
-        fi
+        ) 2>/dev/null  # Suppress any stray error messages from this share
     done
     
     log_message "Network Keeper cycle completed"
