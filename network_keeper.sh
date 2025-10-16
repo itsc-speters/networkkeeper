@@ -193,13 +193,12 @@ OPTIONS:
     add <share>       Adds a network drive
     remove <share>    Removes a network drive
     list              Shows configured drives
-    logs              Shows recent log entries
 
 EXAMPLES:
     nk add "smb://server.local/documents"
     nk status
     nk restart
-    nk logs
+    tail -f ~/.network_keeper.log
 
 EOF
 }
@@ -483,15 +482,6 @@ case "${1:-start}" in
         for share in "${NETWORK_SHARES[@]}"; do
             echo "  - $share"
         done
-        ;;
-        
-    logs)
-        local log_file_path="$HOME/.network_keeper.log"
-        if [[ -f "$log_file_path" ]]; then
-            tail -20 "$log_file_path"
-        else
-            echo "No log file found at: $log_file_path"
-        fi
         ;;
         
     restart)
