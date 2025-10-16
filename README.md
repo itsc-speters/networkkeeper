@@ -8,7 +8,7 @@ Hält automatisch Verbindungen zu Netzlaufwerken aufrecht. Schnell, leicht, unsi
 - 🪶 **Leicht** - ~0.1% CPU, adaptive Intervalle (5s/30s)
 - 😌 **Entspannt** - Keine Error-Dialoge, kein Spam bei Offline
 - 🔐 **Sicher** - Keychain-Integration, keine Passwörter im Script
-- 🎯 **Einfach** - 3 Befehle: add, start, done
+- 🎯 **Einfach** - Einmal einrichten, läuft von selbst
 
 **Unterstützt:** SMB, AFP, NFS
 
