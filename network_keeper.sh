@@ -182,12 +182,10 @@ keep_alive_ping() {
 }
 
 show_usage() {
-    local script_name="${0##*/}"
-    [[ -z "$script_name" ]] && script_name="network_keeper.sh"
     cat << EOF
 Network Drive Keeper - Maintains connections to network drives
 
-Usage: $script_name [OPTIONS]
+Usage: nk [OPTIONS]
 
 OPTIONS:
     start             Starts the service
@@ -201,10 +199,10 @@ OPTIONS:
     logs              Shows recent log entries
 
 EXAMPLES:
-    $script_name add "smb://server.local/documents"
-    $script_name status
-    $script_name restart
-    $script_name logs
+    nk add "smb://server.local/documents"
+    nk status
+    nk restart
+    nk logs
 
 EOF
 }
