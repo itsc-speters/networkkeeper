@@ -6,12 +6,16 @@ Ein automatisches Skript-System, das Verbindungen zu Netzlaufwerken auf macOS au
 
 - **Automatische Wiederverbindung**: Stellt getrennte Netzlaufwerke automatisch wieder her
 - **Keep-Alive**: Sendet regelmäßige Aktivitätssignale um Verbindungen aufrecht zu erhalten
+- **Stille Fehlerbehandlung**: Keine störenden macOS-Fehlerdialoge bei nicht verfügbaren Ressourcen
+- **Intelligente Erreichbarkeitsprüfung**: Prüft Netzwerk und Host-Verfügbarkeit vor Verbindungsversuchen
+- **Timeout-Schutz**: Verhindert Hänger bei nicht reagierenden Netzlaufwerken
 - **Launchd Integration**: Startet automatisch beim Login
 - **Flexible Konfiguration**: Unterstützt SMB, AFP und andere Protokolle
 - **Logging**: Detaillierte Protokollierung aller Aktivitäten
 - **Automatische Keychain-Authentifizierung**: Verwendet macOS Keychain automatisch
 - **Einfache Verwaltung**: Kommandozeilen-Interface für alle Operationen
 - **Intelligente Mount-Punkte**: Automatische Ableitung der Mount-Punkte von Freigabe-Namen
+- **Robuste Fehlerbehandlung**: Einzelne fehlgeschlagene Shares beeinträchtigen nicht andere Verbindungen
 
 ## 🚀 Installation
 
@@ -171,6 +175,18 @@ MAX_LOG_SIZE=1048576    # Maximale Log-Dateigröße (1MB)
 - Mount-Punkte werden automatisch aus Freigabe-Namen erstellt und sind nicht konfigurierbar
 - Fallback-Verzeichnis `~/NetworkDrives/` wird automatisch verwendet wenn `/Volumes/` nicht verfügbar ist
 
+### Fehlerbehandlung
+
+Network Keeper verwendet eine mehrstufige Fehlerbehandlungsstrategie:
+
+1. **Netzwerkverfügbarkeit**: Prüft ob überhaupt Netzwerkzugang besteht (Ping 8.8.8.8)
+2. **Host-Erreichbarkeit**: Testet ob der spezifische Share-Host erreichbar ist
+3. **Stille Fehler**: Mount-Fehler werden nur ins Log geschrieben, keine System-Dialoge
+4. **Timeout-Schutz**: Keep-Alive-Operationen werden nach 2 Sekunden automatisch abgebrochen
+5. **Fehler-Isolation**: Ein fehlgeschlagener Share stoppt nicht die Verarbeitung anderer Shares
+
+**Vorteil**: Das System bleibt unaufdringlich - Sie werden nicht mit Fehlermeldungen bombardiert wenn ein Server offline ist. Alles wird sauber im Log erfasst.
+
 ### Log-System
 
 Network Keeper verwendet drei verschiedene Log-Dateien für unterschiedliche Zwecke:
@@ -209,6 +225,8 @@ cat ~/.network_keeper_err.log       # Fehler-Output vom Service
 - Prüfen Sie Netzwerkkonnektivität
 - Stellen Sie sicher, dass Anmeldedaten in macOS Keychain gespeichert sind
 - Testen Sie manuelle Verbindung im Finder (damit werden Keychain-Einträge erstellt)
+- Überprüfen Sie die Logs - Fehler werden dort protokolliert, aber erzeugen keine System-Dialoge
+- Prüfen Sie ob der Server/Host mit `ping <hostname>` erreichbar ist
 
 ### Log-Dateien verstehen
 
@@ -221,9 +239,14 @@ Network Keeper verwendet drei verschiedene Log-Dateien, die jeweils unterschiedl
 - **Enthält**:
   - Verbindungsversuche und -status
   - Mount/Unmount Aktivitäten
-  - Fehlerdetails und Debug-Informationen
+  - Fehlerdetails und Debug-Informationen (ohne System-Dialoge)
+  - Netzwerk-Erreichbarkeits-Prüfungen
+  - Host-Verfügbarkeits-Tests
   - Zeitgestempelte Ereignisse
-- **Beispiel**: `[2025-06-02 10:30:15] Attempting to connect to smb://server/share...`
+- **Beispiel**:
+  - `[2025-10-16 10:30:15] Attempting to connect to smb://server/share...`
+  - `[2025-10-16 10:30:17] ⚠️ Share host unreachable - skipping mount attempt`
+  - `[2025-10-16 10:30:20] ❌ Error connecting: smb://server/share (resource may be unavailable)`
 
 #### 📤 `.network_keeper_out.log` (Standard-Output)
 
@@ -333,6 +356,20 @@ rm ~/.network_keeper_err.log
 
 # Alias aus ~/.zshrc entfernen (manuell)
 ```
+
+## 🆕 Letzte Verbesserungen (Oktober 2025)
+
+### Refactoring für verbesserte Benutzererfahrung
+
+Das Skript wurde umfassend überarbeitet um störende macOS-Fehlermeldungen zu eliminieren:
+
+- **Keine Fehlerdialoge mehr**: Wenn Netzwerk-Ressourcen nicht verfügbar sind, erscheinen keine störenden macOS-System-Dialoge mehr
+- **Intelligente Pre-Flight-Checks**: Das System prüft erst die Netzwerkverfügbarkeit und Host-Erreichbarkeit, bevor es versucht zu mounten
+- **Timeout-Schutz**: Keep-Alive-Operationen werden automatisch abgebrochen wenn sie hängen bleiben
+- **Bessere Fehler-Isolation**: Probleme mit einem Share beeinflussen nicht die Verarbeitung anderer Shares
+- **Verbesserte Logs**: Alle Fehler werden detailliert protokolliert, aber ohne störende Benachrichtigungen
+
+Weitere Details finden Sie in `REFACTORING_NOTES.md`.
 
 ## 📝 Lizenz
 
