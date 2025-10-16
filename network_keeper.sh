@@ -24,113 +24,51 @@ is_service_running() {
     launchctl list | grep -q "$SERVICE_NAME"
 }
 
-# Check if network is available before attempting mount operations
-is_network_available() {
-    # Simple ping test to check network connectivity
-    # Use a reliable DNS server (Google's) with a short timeout
-    # -c 1: send 1 packet, -W 2000: 2 second timeout (in milliseconds on macOS)
-    ping -c 1 -W 2000 8.8.8.8 >/dev/null 2>&1
-    local ping_result=$?
-    
-    # If ping fails, also check if we have any active network interfaces
-    if [[ $ping_result -ne 0 ]]; then
-        # Check if any network interface (excluding loopback) is active
-        ifconfig | grep -q "status: active" 2>/dev/null
-        return $?
-    fi
-    
-    return 0
-}
-
 get_mount_point() {
     local share="$1"
     local share_name=$(basename "$share")
     echo "/Volumes/$share_name"
 }
 
-get_fallback_mount_point() {
-    local mount_point="$1"
-    echo "$HOME/NetworkDrives/$(basename "$mount_point")"
-}
-
-# Check if a network share is actually available and accessible
+# Check if a network share is actually available
 is_share_available() {
     local share="$1"
-    
-    # Extract protocol, host, and share path
     local protocol=""
     local host=""
-    local share_path=""
     local port=""
     
-    # Parse the share URL: protocol://host/path or protocol://host:port/path
-    # Updated regex to handle dots, hyphens, and alphanumeric characters in hostname
+    # Parse: protocol://host/path or protocol://host:port/path
     if [[ "$share" =~ ^([a-z]+)://([a-zA-Z0-9._-]+)(:([0-9]+))?(/.*)?$ ]]; then
-        # Check if we're in bash or zsh
-        if [[ -n "${BASH_REMATCH}" ]]; then
-            # Bash style
-            protocol="${BASH_REMATCH[1]}"
-            host="${BASH_REMATCH[2]}"
-            port="${BASH_REMATCH[4]}"
-            share_path="${BASH_REMATCH[5]}"
-        else
-            # Zsh style - use match array
-            protocol="${match[1]}"
-            host="${match[2]}"
-            port="${match[4]}"
-            share_path="${match[5]}"
-        fi
+        # Zsh style - use match array
+        protocol="${match[1]}"
+        host="${match[2]}"
+        port="${match[4]}"
         
         # Remove username if present (user@host -> host)
         host="${host##*@}"
     else
-        # Cannot parse share URL
         log_message "⚠️ Cannot parse share URL: $share"
         return 1
     fi
     
-    # First, quick ping test to see if host is reachable
-    if ! ping -c 1 -t 2 -W 1000 "$host" >/dev/null 2>&1; then
-        # Host doesn't respond to ping - could be firewall, but let's check the service port
-        :  # Continue to port check
-    fi
-    
-    # Check if the specific service port is open
+    # Check if the service port is open
     case "$protocol" in
         smb|cifs)
-            # SMB uses port 445 (or 139 for older systems)
             local smb_port="${port:-445}"
-            if ! nc -z -w 2 "$host" "$smb_port" 2>/dev/null; then
-                # Try alternative SMB port
-                if ! nc -z -w 2 "$host" 139 2>/dev/null; then
-                    return 1  # SMB service not available
-                fi
-            fi
+            nc -z -w 2 "$host" "$smb_port" 2>/dev/null || \
+            nc -z -w 2 "$host" 139 2>/dev/null
             ;;
         afp)
-            # AFP uses port 548
-            local afp_port="${port:-548}"
-            if ! nc -z -w 2 "$host" "$afp_port" 2>/dev/null; then
-                return 1  # AFP service not available
-            fi
+            nc -z -w 2 "$host" "${port:-548}" 2>/dev/null
             ;;
         nfs)
-            # NFS uses port 2049
-            local nfs_port="${port:-2049}"
-            if ! nc -z -w 2 "$host" "$nfs_port" 2>/dev/null; then
-                return 1  # NFS service not available
-            fi
+            nc -z -w 2 "$host" "${port:-2049}" 2>/dev/null
             ;;
         *)
-            # For unknown protocols, just do ping test
-            if ! ping -c 1 -t 2 -W 1000 "$host" >/dev/null 2>&1; then
-                return 1
-            fi
+            # Unknown protocol - assume available
+            return 0
             ;;
     esac
-    
-    # If we get here, the service appears to be available
-    return 0
 }
 
 # Functions
@@ -153,57 +91,23 @@ check_mount() {
     local share="$1"
     local mount_point="$2"
     
-    # Check if mount point exists and is mounted
-    if mount | grep -q "$mount_point"; then
-        return 0  # Is mounted
-    else
-        # Also check fallback location if the original was in /Volumes/
-        if [[ "$mount_point" == /Volumes/* ]]; then
-            local fallback_point=$(get_fallback_mount_point "$mount_point")
-            if mount | grep -q "$fallback_point"; then
-                return 0  # Is mounted at fallback location
-            fi
-        fi
-        return 1  # Is not mounted
-    fi
+    # Check if mount point is mounted
+    mount | grep -q "$mount_point"
 }
 
 mount_share() {
     local share="$1"
     local mount_point="$2"
     
-    # Check if network is available before attempting to mount
-    if ! is_network_available; then
-        log_message "⚠️ Network not available - skipping mount attempt for $share"
-        return 1
-    fi
-    
-    # Check if the specific share is actually available (port check)
+    # Check if the share is available (port check)
     if ! is_share_available "$share"; then
-        log_message "⚠️ Share not available - skipping mount attempt for $share"
+        log_message "⚠️ Share not available: $share"
         return 1
     fi
     
     log_message "Attempting to connect to $share..."
     
-    # Create mount point if it doesn't exist
-    if [[ ! -d "$mount_point" ]]; then
-        if ! mkdir -p "$mount_point" 2>/dev/null; then
-            # If we can't create the mount point in /Volumes/, try a fallback location
-            if [[ "$mount_point" == /Volumes/* ]]; then
-                local fallback_point=$(get_fallback_mount_point "$mount_point")
-                mount_point="$fallback_point"
-                mkdir -p "$mount_point" 2>/dev/null
-            else
-                log_message "❌ Cannot create mount point: $mount_point"
-                return 1
-            fi
-        fi
-    fi
-    
-    # Use osascript to mount volume - this always uses Keychain authentication
-    # We need to suppress error dialogs that macOS might show
-    local mount_error=""
+    # Mount using osascript (macOS creates mount point automatically)
     local mount_output=""
     local mount_status=0
     
@@ -258,39 +162,10 @@ EOF
     fi
     
     if [[ $mount_status -eq 0 ]]; then
-        log_message "✅ Successfully connected: $share (mounted via Keychain)"
-        
-        # Find where macOS actually mounted the share
-        local actual_mount_point=""
-        local expected_mount_point=$(get_mount_point "$share")
-        
-        # Check common mount locations
-        if [[ -d "$expected_mount_point" ]]; then
-            actual_mount_point="$expected_mount_point"
-        else
-            # Try to find the mount point by checking recent mount entries
-            actual_mount_point=$(mount | grep "$share" | awk '{print $3}' | head -1)
-        fi
-        
-        if [[ -n "$actual_mount_point" && "$actual_mount_point" != "$mount_point" ]]; then
-            log_message "   Mounted at: $actual_mount_point"
-            # Create a symlink if the expected mount point is different
-            if [[ ! -e "$mount_point" ]]; then
-                ln -sf "$actual_mount_point" "$mount_point" 2>/dev/null && \
-                log_message "   Created symlink: $mount_point -> $actual_mount_point"
-            fi
-        fi
-        
+        log_message "✅ Successfully connected: $share"
         return 0
     else
-        # Only log the error to our log file, don't show macOS system dialogs
-        log_message "❌ Error connecting: $share (resource may be unavailable)"
-        log_message "   Will retry next cycle"
-        
-        # Clean up failed mount point if we created it
-        if [[ -d "$mount_point" ]] && [[ -z "$(ls -A "$mount_point" 2>/dev/null)" ]]; then
-            rmdir "$mount_point" 2>/dev/null
-        fi
+        log_message "❌ Error connecting: $share"
         return 1
     fi
 }
@@ -298,31 +173,12 @@ EOF
 keep_alive_ping() {
     local mount_point="$1"
     
-    # Small activity on the network drive to keep connection alive
-    # Suppress all error messages to avoid macOS system dialogs
+    # Small activity to keep connection alive
     if [[ -d "$mount_point" ]]; then
-        # Use timeout to prevent hanging on unresponsive network drives
-        ( 
-            # Run in subshell with timeout
-            ls "$mount_point" >/dev/null 2>&1 &
-            local ls_pid=$!
-            sleep 2
-            if kill -0 "$ls_pid" 2>/dev/null; then
-                kill -9 "$ls_pid" 2>/dev/null
-            fi
-            wait "$ls_pid" 2>/dev/null
-        )
-        
-        # Try to touch a keepalive file (silently fail if not writable)
+        ls "$mount_point" >/dev/null 2>&1
         touch "$mount_point/.network_keeper_keepalive" 2>/dev/null
         rm "$mount_point/.network_keeper_keepalive" 2>/dev/null
     fi
-}
-
-cleanup() {
-    log_message "Network Keeper is shutting down..."
-    rm -f "$HOME/.network_keeper.pid"
-    exit 0
 }
 
 show_usage() {
@@ -334,25 +190,21 @@ Network Drive Keeper - Maintains connections to network drives
 Usage: $script_name [OPTIONS]
 
 OPTIONS:
-    start             Starts the service if needed, or runs one check cycle
-    daemon            Starts the daemon in infinite loop mode
-    stop              Stops the service and all processes
-    restart           Restarts the launchd service
+    start             Starts the service
+    stop              Stops the service
+    restart           Restarts the service
     status            Shows the status
     test              Tests the configuration
     add <share>       Adds a network drive
     remove <share>    Removes a network drive
     list              Shows configured drives
     logs              Shows recent log entries
-    service <cmd>     Manages the launchd service (start|stop|restart|status)
 
 EXAMPLES:
-    $script_name daemon
     $script_name add "smb://server.local/documents"
     $script_name status
-    $script_name stop
     $script_name restart
-    $script_name service status
+    $script_name logs
 
 EOF
 }
@@ -495,15 +347,8 @@ main_loop() {
                 log_message "⚠️ Connection lost: $share"
                 mount_share "$share" "$mount_point"
             else
-                # Send keep-alive signal - check both original and fallback locations
-                if [[ -d "$mount_point" ]] && mount | grep -q "$mount_point"; then
-                    keep_alive_ping "$mount_point"
-                elif [[ "$mount_point" == /Volumes/* ]]; then
-                    local fallback_point=$(get_fallback_mount_point "$mount_point")
-                    if [[ -d "$fallback_point" ]] && mount | grep -q "$fallback_point"; then
-                        keep_alive_ping "$fallback_point"
-                    fi
-                fi
+                # Send keep-alive signal
+                keep_alive_ping "$mount_point"
             fi
         ) 2>/dev/null  # Suppress any stray error messages from this share
     done
@@ -531,146 +376,21 @@ case "${1:-start}" in
         if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
             echo "⚠️ No network drives configured!"
             echo "Use '$0 add <share>' to add drives."
-            echo "Starting anyway - will monitor for configuration changes..."
-        fi
-        
-        if [[ -f "$HOME/.network_keeper.pid" ]] && kill -0 "$(cat "$HOME/.network_keeper.pid")" 2>/dev/null; then
-            echo "Network Keeper is already running (PID: $(cat "$HOME/.network_keeper.pid"))"
-            exit 1
-        fi
-        
-        echo "Starting Network Keeper..."
-        if [[ ${#NETWORK_SHARES[@]} -gt 0 ]]; then
-            echo "Monitoring ${#NETWORK_SHARES[@]} network drive(s):"
-            for share in "${NETWORK_SHARES[@]}"; do
-                echo "  - $share"
-            done
-        else
-            echo "No network drives configured - running cycle anyway..."
         fi
         
         # Run one cycle and exit (launchd will restart us)
         main_loop
-        echo "Network Keeper cycle completed"
-        ;;
-        
-    daemon)
-        # This is the old infinite loop mode for manual usage
-        load_config
-        if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
-            echo "⚠️ No network drives configured!"
-            echo "Use '$0 add <share>' to add drives."
-            echo "Starting anyway - will monitor for configuration changes..."
-        fi
-        
-        if [[ -f "$HOME/.network_keeper.pid" ]] && kill -0 "$(cat "$HOME/.network_keeper.pid")" 2>/dev/null; then
-            echo "Network Keeper is already running (PID: $(cat "$HOME/.network_keeper.pid"))"
-            exit 1
-        fi
-        
-        echo "Starting Network Keeper daemon..."
-        if [[ ${#NETWORK_SHARES[@]} -gt 0 ]]; then
-            echo "Monitoring ${#NETWORK_SHARES[@]} network drive(s):"
-            for share in "${NETWORK_SHARES[@]}"; do
-                echo "  - $share"
-            done
-        else
-            echo "No network drives configured - waiting for configuration..."
-        fi
-        
-        # Signal handler for clean shutdown
-        trap cleanup SIGTERM SIGINT
-        
-        echo $$ > "$HOME/.network_keeper.pid"
-        
-        while true; do
-            main_loop
-            # Use shorter sleeps to avoid issues
-            for ((i=0; i<CHECK_INTERVAL; i++)); do
-                sleep 1
-            done
-        done
         ;;
         
     stop)
-        stopped_any=false
-        
-        # First, unload the launchd service to prevent it from restarting processes
-        if [[ -f "$PLIST_PATH" ]]; then
-            if is_service_running; then
-                echo "Unloading launchd service..."
-                launchctl unload "$PLIST_PATH" 2>/dev/null
-                sleep 1
-                
-                if is_service_running; then
-                    echo "⚠️ Service still active, force unloading..."
-                    launchctl remove "$SERVICE_NAME" 2>/dev/null
-                fi
-                stopped_any=true
-                echo "✅ Service unloaded from launchd"
-            else
-                echo "ℹ️ Service not currently loaded in launchd"
-            fi
+        if [[ -f "$PLIST_PATH" ]] && is_service_running; then
+            echo "🛑 Stopping Network Keeper service..."
+            launchctl unload "$PLIST_PATH" 2>/dev/null
+            echo "✅ Service stopped"
+            exit 0
         else
-            echo "ℹ️ Service plist not found"
-        fi
-        
-        # Then stop any currently running processes
-        if [[ -f "$HOME/.network_keeper.pid" ]]; then
-            pid=$(cat "$HOME/.network_keeper.pid")
-            if kill -0 "$pid" 2>/dev/null; then
-                kill "$pid"
-                sleep 1
-                if kill -0 "$pid" 2>/dev/null; then
-                    echo "Force killing PID: $pid"
-                    kill -9 "$pid" 2>/dev/null
-                fi
-                echo "✅ Stopped process (PID: $pid)"
-                stopped_any=true
-            fi
-            rm -f "$HOME/.network_keeper.pid"
-        fi
-        
-        # Also check for and stop any other running Network Keeper processes
-        other_pids=$(pgrep -f "network_keeper.sh.*start" 2>/dev/null)
-        if [[ -n "$other_pids" ]]; then
-            echo "Stopping additional Network Keeper processes..."
-            for pid in $other_pids; do
-                if kill -0 "$pid" 2>/dev/null; then
-                    kill "$pid"
-                    sleep 1
-                    if kill -0 "$pid" 2>/dev/null; then
-                        echo "  Force killing PID: $pid"
-                        kill -9 "$pid" 2>/dev/null
-                    else
-                        echo "  Stopped PID: $pid"
-                    fi
-                    stopped_any=true
-                fi
-            done
-        fi
-        
-        # Final verification and cleanup
-        sleep 1
-        remaining_pids=$(pgrep -f "network_keeper.sh.*start" 2>/dev/null)
-        if [[ -n "$remaining_pids" ]]; then
-            echo "Force killing remaining processes..."
-            for pid in $remaining_pids; do
-                kill -9 "$pid" 2>/dev/null
-                echo "  Force killed PID: $pid"
-            done
-            stopped_any=true
-        fi
-        
-        # Final status check
-        if is_service_running; then
-            echo "⚠️ Warning: Service may still be loaded in launchd"
-        fi
-        
-        if [[ "$stopped_any" == "false" ]]; then
-            echo "❌ Network Keeper was not running"
-        else
-            echo "✅ Network Keeper completely stopped"
+            echo "ℹ️ Service is not running"
+            exit 0
         fi
         ;;
         
@@ -722,56 +442,32 @@ case "${1:-start}" in
             exit 1
         fi
         
-        local test_counter=1
         for share in "${NETWORK_SHARES[@]}"; do
             echo "Testing: $share"
-            
-            # Always derive mount point from share name
             mount_point=$(get_mount_point "$share")
             
-            # Check if already mounted at the expected location
-            actual_mount_point=""
-            
-            # First check original location
-            if mount | grep -q "$mount_point"; then
-                actual_mount_point="$mount_point"
-            elif [[ "$mount_point" == /Volumes/* ]]; then
-                # Check fallback location
-                local fallback_point=$(get_fallback_mount_point "$mount_point")
-                if mount | grep -q "$fallback_point"; then
-                    actual_mount_point="$fallback_point"
-                fi
-            fi
-            
-            if [[ -n "$actual_mount_point" ]]; then
-                echo "✅ Already connected at: $actual_mount_point"
-                # Test read access
-                if ls "$actual_mount_point" >/dev/null 2>&1; then
+            if check_mount "$share"; then
+                echo "✅ Already connected at: $mount_point"
+                if ls "$mount_point" >/dev/null 2>&1; then
                     echo "✅ Read access confirmed"
                 else
                     echo "⚠️ Mount exists but read access failed"
                 fi
             else
-                echo "❌ Not mounted at expected location: $mount_point"
-                # Also check fallback location
-                if [[ "$mount_point" == /Volumes/* ]]; then
-                    local fallback_point=$(get_fallback_mount_point "$mount_point")
-                    echo "❌ Not mounted at fallback location: $fallback_point"
-                fi
-                echo "   Attempting test connection..."
-                # Try to mount to a temporary location for testing
-                test_mount="/tmp/nk_test_$$_$test_counter"
-                if mount_share "$share" "$test_mount"; then
-                    echo "✅ Test connection successful"
-                    sleep 1
-                    umount "$test_mount" 2>/dev/null
-                    rmdir "$test_mount" 2>/dev/null
+                echo "❌ Not mounted"
+                if is_share_available "$share"; then
+                    echo "✅ Share is available"
+                    echo "   Attempting test connection..."
+                    if mount_share "$share"; then
+                        echo "✅ Test connection successful"
+                    else
+                        echo "❌ Test connection failed"
+                    fi
                 else
-                    echo "❌ Test connection failed"
+                    echo "❌ Share is not available"
                 fi
             fi
             echo ""
-            ((test_counter++))
         done
         ;;
         
@@ -823,63 +519,7 @@ case "${1:-start}" in
         fi
         ;;
         
-    service)
-        # Subcommand for service management
-        subcommand="${2:-}"
-        case "$subcommand" in
-            start)
-                if [[ -f "$PLIST_PATH" ]]; then
-                    if is_service_running; then
-                        echo "✅ Service is already running"
-                    else
-                        launchctl load "$PLIST_PATH"
-                        if is_service_running; then
-                            echo "✅ Service started"
-                        else
-                            echo "❌ Failed to start service"
-                            exit 1
-                        fi
-                    fi
-                else
-                    echo "❌ Service not installed. Run './install.sh' first."
-                    exit 1
-                fi
-                ;;
-            stop)
-                if is_service_running; then
-                    launchctl unload "$PLIST_PATH" 2>/dev/null
-                    if is_service_running; then
-                        launchctl remove "$SERVICE_NAME" 2>/dev/null
-                    fi
-                    echo "✅ Service stopped"
-                else
-                    echo "ℹ️ Service is not running"
-                fi
-                ;;
-            restart)
-                $0 service stop
-                sleep 1
-                $0 service start
-                ;;
-            status)
-                if is_service_running; then
-                    echo "✅ Service is running"
-                else
-                    echo "❌ Service is stopped"
-                fi
-                ;;
-            *)
-                echo "Usage: $0 service {start|stop|restart|status}"
-                echo ""
-                echo "Service commands:"
-                echo "  start    - Load the launchd service"
-                echo "  stop     - Unload the launchd service"  
-                echo "  restart  - Restart the launchd service"
-                echo "  status   - Check if service is loaded"
-                ;;
-        esac
-        ;;
-        
+
     *)
         show_usage
         ;;
