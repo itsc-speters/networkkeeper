@@ -89,15 +89,11 @@ log_message() {
 
 check_mount() {
     local share="$1"
-    local mount_point="$2"
-    
-    # Check if mount point is mounted
-    mount | grep -q "$mount_point"
+    mount | grep -q "$(get_mount_point "$share")"
 }
 
 mount_share() {
     local share="$1"
-    local mount_point="$2"
     
     # Check if the share is available (port check)
     if ! is_share_available "$share"; then
@@ -209,10 +205,7 @@ EOF
 
 add_network_share() {
     local new_share="$1"
-    if [[ -z "$new_share" ]]; then
-        echo "Error: No network share specified"
-        return 1
-    fi
+    [[ -z "$new_share" ]] && echo "❌ Error: No network share specified" && return 1
     
     # Create configuration file with proper header if it doesn't exist
     if [[ ! -f "$HOME/.network_keeper_config" ]]; then
@@ -337,16 +330,13 @@ main_loop() {
     for share in "${NETWORK_SHARES[@]}"; do
         # Wrap each share check in error handling to prevent one failure from stopping the loop
         (
-            # Always derive mount point from share name
-            mount_point=$(get_mount_point "$share")
-            
             # Check connection and restore if necessary
-            if ! check_mount "$share" "$mount_point"; then
+            if ! check_mount "$share"; then
                 log_message "⚠️ Connection lost: $share"
-                mount_share "$share" "$mount_point"
+                mount_share "$share"
             else
                 # Send keep-alive signal
-                keep_alive_ping "$mount_point"
+                keep_alive_ping "$(get_mount_point "$share")"
             fi
         ) 2>/dev/null  # Suppress any stray error messages from this share
     done
@@ -415,7 +405,7 @@ case "${1:-start}" in
                 fi
             else
                 echo "⚠️ Network Keeper service is installed but not running"
-                echo "   Use './network_keeper.sh start' or './network_keeper.sh service start' to start it"
+                echo "   Use 'nk start' to start it"
             fi
             
             echo ""
@@ -442,11 +432,10 @@ case "${1:-start}" in
         
         for share in "${NETWORK_SHARES[@]}"; do
             echo "Testing: $share"
-            mount_point=$(get_mount_point "$share")
             
             if check_mount "$share"; then
-                echo "✅ Already connected at: $mount_point"
-                if ls "$mount_point" >/dev/null 2>&1; then
+                echo "✅ Already connected at: $(get_mount_point "$share")"
+                if ls "$(get_mount_point "$share")" >/dev/null 2>&1; then
                     echo "✅ Read access confirmed"
                 else
                     echo "⚠️ Mount exists but read access failed"
@@ -495,26 +484,10 @@ case "${1:-start}" in
         ;;
         
     restart)
-        echo "Restarting Network Keeper..."
-        # Stop the service first
-        echo "Stopping service..."
+        echo "🔄 Restarting Network Keeper..."
         $0 stop
-        sleep 2
-        
-        # Start the service again
-        echo "Starting service..."
-        if [[ -f "$PLIST_PATH" ]]; then
-            launchctl load "$PLIST_PATH"
-            if is_service_running; then
-                echo "✅ Network Keeper service restarted"
-            else
-                echo "❌ Failed to restart service"
-                exit 1
-            fi
-        else
-            echo "❌ Service not installed. Run './install.sh' first."
-            exit 1
-        fi
+        sleep 1
+        $0 start
         ;;
         
 
