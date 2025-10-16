@@ -12,8 +12,9 @@ NETWORK_SHARES=(
 )
 
 # Settings
-CHECK_INTERVAL=30        # Check every 30 seconds
-MAX_LOG_SIZE=1048576    # 1MB
+CHECK_INTERVAL_FAST=5    # Fast check when mounted (seconds)
+CHECK_INTERVAL_SLOW=30   # Slow check when disconnected (seconds)
+MAX_LOG_SIZE=1048576     # 1MB
 PLIST_PATH="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
 SERVICE_NAME="com.user.networkkeeper"
 
@@ -317,31 +318,38 @@ load_config() {
 }
 
 main_loop() {
-    log_message "Network Keeper cycle started (PID: $$)"
+    log_message "Network Keeper started in continuous mode (PID: $$)"
     
-    # Do one cycle of checks
-    load_config
-    if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
-        log_message "No network shares configured. Cycle complete."
-        return 0
-    fi
-    
-    # Iterate through all shares
-    for share in "${NETWORK_SHARES[@]}"; do
-        # Wrap each share check in error handling to prevent one failure from stopping the loop
-        (
-            # Check connection and restore if necessary
-            if ! check_mount "$share"; then
-                log_message "⚠️ Connection lost: $share"
-                mount_share "$share"
+    while true; do
+        load_config
+        if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
+            sleep $CHECK_INTERVAL_SLOW
+            continue
+        fi
+        
+        local all_mounted=true
+        
+        # Check all shares
+        for share in "${NETWORK_SHARES[@]}"; do
+            if check_mount "$share"; then
+                # Mounted - quick keepalive
+                keep_alive_ping "$(get_mount_point "$share")" 2>/dev/null
             else
-                # Send keep-alive signal
-                keep_alive_ping "$(get_mount_point "$share")"
+                # Not mounted - try to reconnect
+                all_mounted=false
+                if mount_share "$share" 2>/dev/null; then
+                    all_mounted=true
+                fi
             fi
-        ) 2>/dev/null  # Suppress any stray error messages from this share
+        done
+        
+        # Adaptive sleep: fast when all mounted, slow when disconnected
+        if [[ "$all_mounted" == "true" ]]; then
+            sleep $CHECK_INTERVAL_FAST
+        else
+            sleep $CHECK_INTERVAL_SLOW
+        fi
     done
-    
-    log_message "Network Keeper cycle completed"
 }
 
 # Main program
@@ -352,7 +360,7 @@ case "${1:-start}" in
             echo "📡 Starting Network Keeper service..."
             launchctl load "$PLIST_PATH"
             if is_service_running; then
-                echo "✅ Service started - monitoring will begin automatically"
+                echo "✅ Service started - continuous monitoring active"
                 exit 0
             else
                 echo "❌ Failed to start service"
@@ -363,10 +371,11 @@ case "${1:-start}" in
         load_config
         if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
             echo "⚠️ No network drives configured!"
-            echo "Use '$0 add <share>' to add drives."
+            echo "Use 'nk add <share>' to add drives."
+            exit 0
         fi
         
-        # Run one cycle and exit (launchd will restart us)
+        # Run continuous monitoring loop (launchd keeps us alive)
         main_loop
         ;;
         
@@ -393,7 +402,9 @@ case "${1:-start}" in
                 service_status=$(launchctl list | grep "$SERVICE_NAME" | awk '{print $1}')
                 echo "✅ Network Keeper service is active"
                 echo "   Last execution status: $service_status"
-                echo "   Service runs every $CHECK_INTERVAL seconds via launchd"
+                echo "   Monitoring: continuous with adaptive intervals"
+                echo "   - Fast check: ${CHECK_INTERVAL_FAST}s (when mounted)"
+                echo "   - Slow check: ${CHECK_INTERVAL_SLOW}s (when disconnected)"
                 
                 # Show recent log entries
                 echo ""

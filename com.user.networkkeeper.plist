@@ -16,10 +16,7 @@
     <true/>
     
     <key>KeepAlive</key>
-    <false/>
-    
-    <key>StartInterval</key>
-    <integer>30</integer>
+    <true/>
     
     <key>StandardOutPath</key>
     <string>{{USER_HOME}}/.network_keeper.log</string>
