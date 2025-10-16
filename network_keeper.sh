@@ -53,48 +53,94 @@ get_fallback_mount_point() {
     echo "$HOME/NetworkDrives/$(basename "$mount_point")"
 }
 
-# Check if a network share host is reachable
-is_share_reachable() {
+# Check if a network share is actually available and accessible
+is_share_available() {
     local share="$1"
     
-    # Extract hostname/IP from share URL
-    # Examples: smb://server.local/share -> server.local
-    #          afp://192.168.1.100/docs -> 192.168.1.100
+    # Extract protocol, host, and share path
+    local protocol=""
     local host=""
+    local share_path=""
+    local port=""
     
-    if [[ "$share" =~ ^[a-z]+://([^/]+) ]]; then
-        host="${BASH_REMATCH[1]}"
+    # Parse the share URL: protocol://host/path or protocol://host:port/path
+    # Updated regex to handle dots, hyphens, and alphanumeric characters in hostname
+    if [[ "$share" =~ ^([a-z]+)://([a-zA-Z0-9._-]+)(:([0-9]+))?(/.*)?$ ]]; then
+        # Check if we're in bash or zsh
+        if [[ -n "${BASH_REMATCH}" ]]; then
+            # Bash style
+            protocol="${BASH_REMATCH[1]}"
+            host="${BASH_REMATCH[2]}"
+            port="${BASH_REMATCH[4]}"
+            share_path="${BASH_REMATCH[5]}"
+        else
+            # Zsh style - use match array
+            protocol="${match[1]}"
+            host="${match[2]}"
+            port="${match[4]}"
+            share_path="${match[5]}"
+        fi
         
         # Remove username if present (user@host -> host)
         host="${host##*@}"
-        
-        # Remove port if present (host:port -> host)
-        host="${host%%:*}"
     else
-        # Cannot parse host from share
-        return 0  # Assume reachable if we can't parse
+        # Cannot parse share URL
+        log_message "⚠️ Cannot parse share URL: $share"
+        return 1
     fi
     
-    # Quick ping test with very short timeout
-    # -c 1: one packet, -t 2: 2 second timeout, -W 1000: 1 second wait
-    ping -c 1 -t 2 -W 1000 "$host" >/dev/null 2>&1
-    return $?
+    # First, quick ping test to see if host is reachable
+    if ! ping -c 1 -t 2 -W 1000 "$host" >/dev/null 2>&1; then
+        # Host doesn't respond to ping - could be firewall, but let's check the service port
+        :  # Continue to port check
+    fi
+    
+    # Check if the specific service port is open
+    case "$protocol" in
+        smb|cifs)
+            # SMB uses port 445 (or 139 for older systems)
+            local smb_port="${port:-445}"
+            if ! nc -z -w 2 "$host" "$smb_port" 2>/dev/null; then
+                # Try alternative SMB port
+                if ! nc -z -w 2 "$host" 139 2>/dev/null; then
+                    return 1  # SMB service not available
+                fi
+            fi
+            ;;
+        afp)
+            # AFP uses port 548
+            local afp_port="${port:-548}"
+            if ! nc -z -w 2 "$host" "$afp_port" 2>/dev/null; then
+                return 1  # AFP service not available
+            fi
+            ;;
+        nfs)
+            # NFS uses port 2049
+            local nfs_port="${port:-2049}"
+            if ! nc -z -w 2 "$host" "$nfs_port" 2>/dev/null; then
+                return 1  # NFS service not available
+            fi
+            ;;
+        *)
+            # For unknown protocols, just do ping test
+            if ! ping -c 1 -t 2 -W 1000 "$host" >/dev/null 2>&1; then
+                return 1
+            fi
+            ;;
+    esac
+    
+    # If we get here, the service appears to be available
+    return 0
 }
 
 # Functions
 log_message() {
     local message="$1"
-    local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local log_file_path="$HOME/.network_keeper.log"
     
-    # Ensure log directory exists (should always be $HOME)
-    if [[ ! -d "$HOME" ]]; then
-        echo "Error: Home directory does not exist!"
-        return 1
-    fi
-    
-    echo "[$timestamp] $message" | tee -a "$log_file_path"
+    # Write to log file
+    echo "[$timestamp] $message" >> "$log_file_path"
     
     # Rotate log file if too large
     if [[ -f "$log_file_path" ]] && [[ $(stat -f%z "$log_file_path" 2>/dev/null || echo 0) -gt $MAX_LOG_SIZE ]]; then
@@ -132,9 +178,9 @@ mount_share() {
         return 1
     fi
     
-    # Check if the specific share host is reachable
-    if ! is_share_reachable "$share"; then
-        log_message "⚠️ Share host unreachable - skipping mount attempt for $share"
+    # Check if the specific share is actually available (port check)
+    if ! is_share_available "$share"; then
+        log_message "⚠️ Share not available - skipping mount attempt for $share"
         return 1
     fi
     
@@ -156,13 +202,60 @@ mount_share() {
     fi
     
     # Use osascript to mount volume - this always uses Keychain authentication
-    # Redirect both stdout and stderr to capture all output silently
+    # We need to suppress error dialogs that macOS might show
     local mount_error=""
     local mount_output=""
+    local mount_status=0
     
-    # Execute mount command using osascript and suppress macOS system errors
-    mount_output=$(osascript -e "mount volume \"$share\"" 2>&1)
-    local mount_status=$?
+    # Execute mount command using osascript with timeout and background execution
+    # This prevents system error dialogs from appearing
+    (
+        # Run in subshell with timeout to prevent dialogs and hanging
+        osascript <<EOF 2>&1
+try
+    mount volume "$share"
+    return "success"
+on error errMsg
+    return "error: " & errMsg
+end try
+EOF
+    ) > /tmp/.nk_mount_$$ 2>&1 &
+    
+    local mount_pid=$!
+    local wait_time=0
+    local max_wait=10
+    
+    # Wait up to 10 seconds for the mount to complete
+    while kill -0 "$mount_pid" 2>/dev/null && [[ $wait_time -lt $max_wait ]]; do
+        sleep 1
+        ((wait_time++))
+    done
+    
+    # If still running, kill it (mount is taking too long)
+    if kill -0 "$mount_pid" 2>/dev/null; then
+        kill -9 "$mount_pid" 2>/dev/null
+        rm -f /tmp/.nk_mount_$$ 2>/dev/null
+        log_message "❌ Connection timeout: $share (took too long to respond)"
+        log_message "   Will retry next cycle"
+        return 1
+    fi
+    
+    # Wait for process to fully terminate
+    wait "$mount_pid" 2>/dev/null
+    
+    # Check result
+    if [[ -f /tmp/.nk_mount_$$ ]]; then
+        mount_output=$(cat /tmp/.nk_mount_$$ 2>/dev/null)
+        rm -f /tmp/.nk_mount_$$ 2>/dev/null
+        
+        if [[ "$mount_output" == "success" ]]; then
+            mount_status=0
+        else
+            mount_status=1
+        fi
+    else
+        mount_status=1
+    fi
     
     if [[ $mount_status -eq 0 ]]; then
         log_message "✅ Successfully connected: $share (mounted via Keychain)"
