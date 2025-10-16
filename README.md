@@ -84,6 +84,6 @@ nk status                       # Zeigt alles Wichtige
 
 ---
 
-**Konfiguration:** \`~/.network_keeper_config\`  
-**Log-Datei:** \`~/.network_keeper.log\` (auto-rotiert bei 1MB)  
+**Konfiguration:** `~/.network_keeper_config`  
+**Log-Datei:** `~/.network_keeper.log` (auto-rotiert bei 1MB)  
 **Service:** LaunchAgent (startet automatisch beim Login)
