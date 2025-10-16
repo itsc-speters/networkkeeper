@@ -70,11 +70,9 @@ CHECK_INTERVAL=30        # Überprüfungsintervall (Sekunden)
 MAX_LOG_SIZE=1048576    # Log-Rotation bei 1MB
 ```
 
-**Log-Dateien:**
+**Log-Datei:**
 
-- `~/.network_keeper.log` - Hauptlog (alle Aktivitäten)
-- `~/.network_keeper_out.log` - Service-Output
-- `~/.network_keeper_err.log` - Fehler-Output
+- `~/.network_keeper.log` - Alle Aktivitäten und Ereignisse
 
 ## 🔍 Problembehandlung
 

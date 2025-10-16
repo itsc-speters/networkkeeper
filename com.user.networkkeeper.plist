@@ -22,10 +22,10 @@
     <integer>30</integer>
     
     <key>StandardOutPath</key>
-    <string>{{USER_HOME}}/.network_keeper_out.log</string>
+    <string>{{USER_HOME}}/.network_keeper.log</string>
     
     <key>StandardErrorPath</key>
-    <string>{{USER_HOME}}/.network_keeper_err.log</string>
+    <string>{{USER_HOME}}/.network_keeper.log</string>
     
     <key>WorkingDirectory</key>
     <string>{{USER_HOME}}</string>

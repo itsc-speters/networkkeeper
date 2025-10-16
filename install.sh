@@ -1,6 +1,6 @@
 #!/bin/zsh
 
-# Installation and Setup Script for Network Keeper
+# Network Keeper - Installation Script
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NETWORK_KEEPER_SCRIPT="$SCRIPT_DIR/network_keeper.sh"
@@ -8,92 +8,67 @@ LAUNCHD_PLIST="$SCRIPT_DIR/com.user.networkkeeper.plist"
 USER_LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 INSTALLED_PLIST="$USER_LAUNCHD_DIR/com.user.networkkeeper.plist"
 
-echo "🚀 Network Keeper Setup"
-echo "======================"
+echo "🚀 Network Keeper Installation"
+echo "==============================="
+echo ""
 
-# Make executable
+# Make script executable
 chmod +x "$NETWORK_KEEPER_SCRIPT"
 
-# Create LaunchAgents directory if it doesn't exist
+# Create LaunchAgents directory
 mkdir -p "$USER_LAUNCHD_DIR"
 
-# Update plist file with correct paths and user information
+# Install plist with correct paths
 sed -e "s|{{NETWORK_KEEPER_SCRIPT_PATH}}|$NETWORK_KEEPER_SCRIPT|g" \
     -e "s|{{USER_HOME}}|$HOME|g" \
     -e "s|{{USERNAME}}|$(whoami)|g" \
     "$LAUNCHD_PLIST" > "$INSTALLED_PLIST"
 
-echo "✅ Files installed"
-
-# Create example configuration if it doesn't exist
+# Create default configuration if needed
 if [[ ! -f "$HOME/.network_keeper_config" ]]; then
     cat > "$HOME/.network_keeper_config" << 'EOF'
 # Network Keeper Configuration
-# Add your network drives here
 
-# Mount points are automatically derived from share names
-# Credentials are automatically handled via macOS Keychain
-
-# Examples (remove the # to activate them):
+# Example (remove # to activate):
 # NETWORK_SHARES=(
-#     "smb://server.local/documents"    # Will mount to /Volumes/documents
-#     "smb://192.168.1.100/share"       # Will mount to /Volumes/share
-#     "afp://server.local/backup"       # Will mount to /Volumes/backup
+#     "smb://server.local/share"
 # )
 EOF
-    echo "✅ Configuration file created: $HOME/.network_keeper_config"
+    echo "✅ Configuration created: ~/.network_keeper_config"
 else
-    echo "✅ Configuration file already exists: $HOME/.network_keeper_config"
+    echo "✅ Configuration exists: ~/.network_keeper_config"
 fi
-echo ""
-echo "⚠️ IMPORTANT: You must add at least one network drive before the service will work!"
-echo "   Use: $NETWORK_KEEPER_SCRIPT add 'smb://your-server/share'"
-echo ""
-echo "💡 TIP: Connect manually once via Finder to store credentials in Keychain"
 
-# Register launchd service
+# Register service
 if launchctl list | grep -q "com.user.networkkeeper"; then
-    echo "⚠️ Service is already registered, reloading..."
     launchctl unload "$INSTALLED_PLIST" 2>/dev/null
 fi
 
 launchctl load "$INSTALLED_PLIST"
 
 if launchctl list | grep -q "com.user.networkkeeper"; then
-    echo "✅ Service successfully registered"
+    echo "✅ Service registered"
 else
-    echo "❌ Error registering service"
+    echo "❌ Service registration failed"
     exit 1
 fi
 
-echo ""
-echo "📋 Next steps:"
-echo "=============="
-echo "1. Add your network drives:"
-echo "   $NETWORK_KEEPER_SCRIPT add 'smb://your-server/share'"
-echo ""
-echo "2. Test the configuration:"
-echo "   $NETWORK_KEEPER_SCRIPT test"
-echo ""
-echo "3. Check the status:"
-echo "   $NETWORK_KEEPER_SCRIPT status"
-echo ""
-echo "4. View logs:"
-echo "   $NETWORK_KEEPER_SCRIPT logs"
-echo ""
-echo "The service will start automatically on next login!"
-
-# Create alias for easy usage
-SHELL_RC="$HOME/.zshrc"
-if [[ -f "$SHELL_RC" ]] && ! grep -q "network_keeper" "$SHELL_RC"; then
+# Add shell alias
+if [[ -f "$HOME/.zshrc" ]] && ! grep -q "alias nk=" "$HOME/.zshrc"; then
     {
         echo ""
-        echo "# Network Keeper Alias"
+        echo "# Network Keeper"
         echo "alias nk='$NETWORK_KEEPER_SCRIPT'"
-    } >> "$SHELL_RC"
+    } >> "$HOME/.zshrc"
     echo "✅ Alias 'nk' added to ~/.zshrc"
-    echo "   Run 'source ~/.zshrc' or restart your terminal"
 fi
 
 echo ""
-echo "🎉 Installation completed!"
+echo "📝 Quick Start:"
+echo "   nk add 'smb://server/share'   # Add a share"
+echo "   nk status                      # Check status"
+echo "   nk logs                        # View logs"
+echo ""
+echo "💡 Tip: Connect manually once in Finder to save credentials to Keychain"
+echo ""
+echo "🎉 Installation complete!"

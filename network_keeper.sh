@@ -83,9 +83,6 @@ is_share_available() {
         
         # Remove username if present (user@host -> host)
         host="${host##*@}"
-        
-        # Debug log
-        log_message "   Checking availability: protocol=$protocol, host=$host, port=${port:-default}"
     else
         # Cannot parse share URL
         log_message "⚠️ Cannot parse share URL: $share"
@@ -139,17 +136,11 @@ is_share_available() {
 # Functions
 log_message() {
     local message="$1"
-    local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local log_file_path="$HOME/.network_keeper.log"
     
-    # Ensure log directory exists (should always be $HOME)
-    if [[ ! -d "$HOME" ]]; then
-        echo "Error: Home directory does not exist!"
-        return 1
-    fi
-    
-    echo "[$timestamp] $message" | tee -a "$log_file_path"
+    # Write to log file
+    echo "[$timestamp] $message" >> "$log_file_path"
     
     # Rotate log file if too large
     if [[ -f "$log_file_path" ]] && [[ $(stat -f%z "$log_file_path" 2>/dev/null || echo 0) -gt $MAX_LOG_SIZE ]]; then
