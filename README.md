@@ -8,6 +8,7 @@ Hält automatisch Verbindungen zu Netzlaufwerken aufrecht. Schnell, leicht, unsi
 - 🪶 **Leicht** - ~0.1% CPU, adaptive Intervalle (5s/30s)
 - 😌 **Entspannt** - Keine Error-Dialoge, kein Spam bei Offline
 - 🔐 **Sicher** - Keychain-Integration, keine Passwörter im Script
+- 🛡️ **AD-sicher** - Stoppt automatisch bei Passwort-Fehler, verhindert Account-Sperrung
 - 🎯 **Einfach** - Einmal einrichten, läuft von selbst
 
 **Unterstützt:** SMB, AFP, NFS
@@ -29,6 +30,7 @@ nk add "smb://server/share"     # Share hinzufügen
 nk start                        # Service starten
 nk status                       # Status anzeigen
 nk restart                      # Neustart
+nk resume                       # Nach Passwort-Wechsel: Retries wieder aktivieren
 ```
 
 **Logs ansehen:**
@@ -69,6 +71,21 @@ tail -50 ~/.network_keeper.log  # Letzte 50 Zeilen
 
 - **"Share not available"** → VPN getrennt oder Server offline
 - **"Connection timeout"** → Server antwortet nicht, wird automatisch retried
+- **Auth retries PAUSED** → AD-Passwort geändert, Keychain hat noch das alte Passwort
+
+**Nach einem AD-Passwort-Wechsel:**
+
+Nach einem Passwort-Wechsel im Active Directory hält der Service automatisch nach 2 fehlgeschlagenen Versuchen an, um eine Kontosperrung zu verhindern. Eine macOS-Benachrichtigung erscheint.
+
+Ablauf:
+
+1. Keychain-Eintrag aktualisieren: *Keychain-Zugriff* öffnen → alten Eintrag für den Server suchen → Passwort ändern
+2. Retries wieder aktivieren:
+
+```bash
+nk status    # Zeigt an, ob und seit wann Retries pausiert sind
+nk resume    # Aktiviert Retries wieder
+```
 
 **Service-Status:**
 

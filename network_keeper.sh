@@ -17,10 +17,30 @@ CHECK_INTERVAL_SLOW=30   # Slow check when disconnected (seconds)
 MAX_LOG_SIZE=1048576     # 1MB
 PLIST_PATH="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
 SERVICE_NAME="com.user.networkkeeper"
+MAX_AUTH_FAILURES=2      # Pause after this many consecutive auth failures
+AUTH_PAUSED_FILE="$HOME/.network_keeper_auth_paused"
 
 # Note: Credentials are automatically handled via macOS Keychain
 
 # Helper functions
+send_notification() {
+    local title="$1"
+    local message="$2"
+    osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null
+}
+
+is_auth_paused() {
+    [[ -f "$AUTH_PAUSED_FILE" ]]
+}
+
+pause_auth_retries() {
+    local share="$1"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $share" > "$AUTH_PAUSED_FILE"
+    log_message "🔒 Auth retries paused after $MAX_AUTH_FAILURES consecutive failures on: $share"
+    send_notification "Network Keeper: Login-Fehler" \
+        "Zu viele fehlgeschlagene Anmeldeversuche. Keychain-Passwort aktualisieren, dann 'nk resume' ausführen."
+}
+
 is_service_running() {
     launchctl list | grep -q "$SERVICE_NAME"
 }
@@ -133,12 +153,14 @@ EOF
     done
     
     # If still running, kill it (mount is taking too long)
+    # Since is_share_available already confirmed the port is open,
+    # a timeout here typically means macOS showed a password dialog
+    # (wrong/expired Keychain credentials) which blocks osascript.
     if kill -0 "$mount_pid" 2>/dev/null; then
         kill -9 "$mount_pid" 2>/dev/null
         rm -f /tmp/.nk_mount_$$ 2>/dev/null
-        log_message "❌ Connection timeout: $share (took too long to respond)"
-        log_message "   Will retry next cycle"
-        return 1
+        log_message "🔑 Mount timeout (share reachable but mount hung - likely auth issue): $share"
+        return 2
     fi
     
     # Wait for process to fully terminate
@@ -162,6 +184,11 @@ EOF
         log_message "✅ Successfully connected: $share"
         return 0
     else
+        # Detect authentication errors vs. generic network errors
+        if [[ "$mount_output" =~ ([Aa]uthentication|[Uu]ser.name|[Pp]assword|[Cc]redential|-2096|access.denied|[Nn]ot.authoriz) ]]; then
+            log_message "🔑 Authentication error connecting: $share"
+            return 2
+        fi
         log_message "❌ Error connecting: $share"
         return 1
     fi
@@ -189,6 +216,7 @@ OPTIONS:
     stop              Stops the service
     restart           Restarts the service
     status            Shows the status
+    resume            Resumes auth retries after a password change
     test              Tests the configuration
     add <share>       Adds a network drive
     remove <share>    Removes a network drive
@@ -318,30 +346,50 @@ load_config() {
 
 main_loop() {
     log_message "Network Keeper started in continuous mode (PID: $$)"
-    
+
+    local auth_failure_count=0
+
     while true; do
         load_config
         if [[ ${#NETWORK_SHARES[@]} -eq 0 ]]; then
             sleep $CHECK_INTERVAL_SLOW
             continue
         fi
-        
+
+        # If auth is paused, skip all mount attempts
+        if is_auth_paused; then
+            sleep $CHECK_INTERVAL_SLOW
+            continue
+        fi
+
         local all_mounted=true
-        
+
         # Check all shares
         for share in "${NETWORK_SHARES[@]}"; do
             if check_mount "$share"; then
-                # Mounted - quick keepalive
+                # Mounted - quick keepalive, reset auth failure counter on success
                 keep_alive_ping "$(get_mount_point "$share")" 2>/dev/null
+                auth_failure_count=0
             else
                 # Not mounted - try to reconnect
                 all_mounted=false
-                if mount_share "$share" 2>/dev/null; then
+                mount_share "$share" 2>/dev/null
+                local mount_result=$?
+                if [[ $mount_result -eq 0 ]]; then
                     all_mounted=true
+                    auth_failure_count=0
+                elif [[ $mount_result -eq 2 ]]; then
+                    # Authentication error
+                    (( auth_failure_count++ ))
+                    log_message "⚠️ Auth failure $auth_failure_count/$MAX_AUTH_FAILURES for: $share"
+                    if [[ $auth_failure_count -ge $MAX_AUTH_FAILURES ]]; then
+                        pause_auth_retries "$share"
+                        break
+                    fi
                 fi
             fi
         done
-        
+
         # Adaptive sleep: fast when all mounted, slow when disconnected
         if [[ "$all_mounted" == "true" ]]; then
             sleep $CHECK_INTERVAL_FAST
@@ -396,6 +444,14 @@ case "${1:-}" in
             echo "❌ Network Keeper service is not installed"
             echo "   Run './install.sh' to install the service"
         else
+            # Check for auth pause state
+            if is_auth_paused; then
+                echo "🔒 Auth retries are PAUSED due to repeated login failures"
+                echo "   Paused since: $(cat "$AUTH_PAUSED_FILE")"
+                echo "   → Update your Keychain password, then run: nk resume"
+                echo ""
+            fi
+
             # Service is installed, check if it's running
             if is_service_running; then
                 service_status=$(launchctl list | grep "$SERVICE_NAME" | awk '{print $1}')
@@ -484,6 +540,17 @@ case "${1:-}" in
         done
         ;;
         
+    resume)
+        if is_auth_paused; then
+            rm -f "$AUTH_PAUSED_FILE"
+            log_message "🔓 Auth retries resumed manually"
+            echo "✅ Auth retries resumed"
+            echo "   Make sure the Keychain password is up to date before retrying"
+        else
+            echo "ℹ️ Auth retries are not paused"
+        fi
+        ;;
+
     restart)
         echo "🔄 Restarting Network Keeper..."
         $0 stop
