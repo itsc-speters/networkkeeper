@@ -14,6 +14,7 @@ NETWORK_SHARES=(
 # Settings
 CHECK_INTERVAL_FAST=5    # Fast check when mounted (seconds)
 CHECK_INTERVAL_SLOW=30   # Slow check when disconnected (seconds)
+MOUNT_TIMEOUT=30         # Max seconds to wait for a mount to complete
 MAX_LOG_SIZE=1048576     # 1MB
 PLIST_PATH="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
 SERVICE_NAME="com.user.networkkeeper"
@@ -144,23 +145,22 @@ EOF
     
     local mount_pid=$!
     local wait_time=0
-    local max_wait=10
-    
-    # Wait up to 10 seconds for the mount to complete
-    while kill -0 "$mount_pid" 2>/dev/null && [[ $wait_time -lt $max_wait ]]; do
+
+    # Wait for the mount to complete (timeout is configurable via MOUNT_TIMEOUT)
+    while kill -0 "$mount_pid" 2>/dev/null && [[ $wait_time -lt $MOUNT_TIMEOUT ]]; do
         sleep 1
         ((wait_time++))
     done
-    
-    # If still running, kill it (mount is taking too long)
-    # Since is_share_available already confirmed the port is open,
-    # a timeout here typically means macOS showed a password dialog
-    # (wrong/expired Keychain credentials) which blocks osascript.
+
+    # If still running after timeout, kill it
+    # Note: A timeout does NOT necessarily mean wrong credentials -
+    # slow connections can also cause this. Return code 3 (timeout)
+    # instead of 2 (auth error) to avoid false auth failure counts.
     if kill -0 "$mount_pid" 2>/dev/null; then
         kill -9 "$mount_pid" 2>/dev/null
         rm -f /tmp/.nk_mount_$$ 2>/dev/null
-        log_message "🔑 Mount timeout (share reachable but mount hung - likely auth issue): $share"
-        return 2
+        log_message "⏱️ Mount timeout after ${MOUNT_TIMEOUT}s (slow connection or auth dialog): $share"
+        return 3
     fi
     
     # Wait for process to fully terminate
@@ -379,13 +379,16 @@ main_loop() {
                     all_mounted=true
                     auth_failure_count=0
                 elif [[ $mount_result -eq 2 ]]; then
-                    # Authentication error
+                    # Authentication error - count towards pause threshold
                     (( auth_failure_count++ ))
                     log_message "⚠️ Auth failure $auth_failure_count/$MAX_AUTH_FAILURES for: $share"
                     if [[ $auth_failure_count -ge $MAX_AUTH_FAILURES ]]; then
                         pause_auth_retries "$share"
                         break
                     fi
+                elif [[ $mount_result -eq 3 ]]; then
+                    # Timeout - slow connection, do NOT count as auth failure
+                    log_message "⏱️ Mount timed out for: $share (will retry next cycle)"
                 fi
             fi
         done
