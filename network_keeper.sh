@@ -14,7 +14,8 @@ NETWORK_SHARES=(
 # Settings
 CHECK_INTERVAL_FAST=5    # Fast check when mounted (seconds)
 CHECK_INTERVAL_SLOW=30   # Slow check when disconnected (seconds)
-MOUNT_TIMEOUT=30         # Max seconds to wait for a mount to complete
+MOUNT_TIMEOUT=60         # Max seconds to wait for a mount to complete (needs headroom for slow reconnects after VPN)
+AUTH_ERROR_FAST_THRESHOLD=10  # If mount fails within this many seconds, it's likely a real auth error
 MAX_LOG_SIZE=1048576     # 1MB
 PLIST_PATH="$HOME/Library/LaunchAgents/com.user.networkkeeper.plist"
 SERVICE_NAME="com.user.networkkeeper"
@@ -116,19 +117,19 @@ check_mount() {
 
 mount_share() {
     local share="$1"
-    
+
     # Check if the share is available (port check)
     if ! is_share_available "$share"; then
         log_message "⚠️ Share not available: $share"
         return 1
     fi
-    
+
     log_message "Attempting to connect to $share..."
-    
+
     # Mount using osascript (macOS creates mount point automatically)
     local mount_output=""
     local mount_status=0
-    
+
     # Execute mount command using osascript with timeout and background execution
     # This prevents system error dialogs from appearing
     (
@@ -142,35 +143,32 @@ on error errMsg
 end try
 EOF
     ) > /tmp/.nk_mount_$$ 2>&1 &
-    
+
     local mount_pid=$!
     local wait_time=0
 
-    # Wait for the mount to complete (timeout is configurable via MOUNT_TIMEOUT)
+    # Wait for the mount to complete
     while kill -0 "$mount_pid" 2>/dev/null && [[ $wait_time -lt $MOUNT_TIMEOUT ]]; do
         sleep 1
         ((wait_time++))
     done
 
     # If still running after timeout, kill it
-    # Note: A timeout does NOT necessarily mean wrong credentials -
-    # slow connections can also cause this. Return code 3 (timeout)
-    # instead of 2 (auth error) to avoid false auth failure counts.
     if kill -0 "$mount_pid" 2>/dev/null; then
         kill -9 "$mount_pid" 2>/dev/null
         rm -f /tmp/.nk_mount_$$ 2>/dev/null
-        log_message "⏱️ Mount timeout after ${MOUNT_TIMEOUT}s (slow connection or auth dialog): $share"
+        log_message "⏱️ Mount timeout after ${MOUNT_TIMEOUT}s: $share (will retry next cycle)"
         return 3
     fi
-    
+
     # Wait for process to fully terminate
     wait "$mount_pid" 2>/dev/null
-    
+
     # Check result
     if [[ -f /tmp/.nk_mount_$$ ]]; then
         mount_output=$(cat /tmp/.nk_mount_$$ 2>/dev/null)
         rm -f /tmp/.nk_mount_$$ 2>/dev/null
-        
+
         if [[ "$mount_output" == "success" ]]; then
             mount_status=0
         else
@@ -179,19 +177,36 @@ EOF
     else
         mount_status=1
     fi
-    
+
     if [[ $mount_status -eq 0 ]]; then
         log_message "✅ Successfully connected: $share"
         return 0
-    else
-        # Detect authentication errors vs. generic network errors
-        if [[ "$mount_output" =~ ([Aa]uthentication|[Uu]ser.name|[Pp]assword|[Cc]redential|-2096|access.denied|[Nn]ot.authoriz) ]]; then
-            log_message "🔑 Authentication error connecting: $share"
-            return 2
-        fi
-        log_message "❌ Error connecting: $share"
-        return 1
     fi
+
+    # --- Auth error detection based on response time ---
+    # A real auth error returns FAST (server reachable, credentials rejected immediately).
+    # After VPN reconnect, the first mount attempt is slow and macOS often returns
+    # auth-like error messages even though the password is correct.
+    # Therefore: only classify as auth error if the server responded quickly.
+    local has_auth_keywords=false
+    if [[ "$mount_output" =~ ([Aa]uthentication|[Uu]ser.name|[Pp]assword|[Cc]redential|-2096|access.denied|[Nn]ot.authoriz) ]]; then
+        has_auth_keywords=true
+    fi
+
+    if [[ "$has_auth_keywords" == "true" ]]; then
+        if [[ $wait_time -lt $AUTH_ERROR_FAST_THRESHOLD ]]; then
+            # Fast failure with auth keywords = genuine authentication error
+            log_message "🔑 Authentication error connecting (responded in ${wait_time}s): $share"
+            return 2
+        else
+            # Slow failure with auth keywords = likely slow reconnect, NOT wrong password
+            log_message "⏱️ Slow response (${wait_time}s) with auth-like error - treating as slow connection, not wrong password: $share"
+            return 3
+        fi
+    fi
+
+    log_message "❌ Error connecting: $share"
+    return 1
 }
 
 keep_alive_ping() {
@@ -387,8 +402,8 @@ main_loop() {
                         break
                     fi
                 elif [[ $mount_result -eq 3 ]]; then
-                    # Timeout - slow connection, do NOT count as auth failure
-                    log_message "⏱️ Mount timed out for: $share (will retry next cycle)"
+                    # Timeout or slow connection - do NOT count as auth failure
+                    :
                 fi
             fi
         done
