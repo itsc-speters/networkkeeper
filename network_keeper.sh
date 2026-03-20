@@ -360,6 +360,12 @@ load_config() {
 }
 
 main_loop() {
+    # Clear auth pause from previous run on fresh start
+    if is_auth_paused; then
+        rm -f "$AUTH_PAUSED_FILE"
+        log_message "🔓 Auth pause cleared on service restart"
+    fi
+
     log_message "Network Keeper started in continuous mode (PID: $$)"
 
     local auth_failure_count=0
@@ -570,10 +576,32 @@ case "${1:-}" in
         ;;
 
     restart)
+        if ! is_service_running; then
+            echo "ℹ️ Service is not running. Starting..."
+            $0 start
+            exit $?
+        fi
         echo "🔄 Restarting Network Keeper..."
-        $0 stop
-        sleep 1
-        $0 start
+        # KeepAlive=true means launchd automatically restarts after stop
+        launchctl stop "$SERVICE_NAME"
+        # Wait for launchd to restart the process
+        tries=0
+        while [[ $tries -lt 10 ]]; do
+            sleep 1
+            ((tries++))
+            if is_service_running; then
+                new_pid=$(launchctl list | grep "$SERVICE_NAME" | awk '{print $1}')
+                echo "✅ Service restarted (PID: $new_pid)"
+                # Clear auth pause on restart so reconnection is attempted immediately
+                if is_auth_paused; then
+                    rm -f "$AUTH_PAUSED_FILE"
+                    echo "🔓 Auth pause cleared"
+                fi
+                exit 0
+            fi
+        done
+        echo "❌ Service did not restart within 10s"
+        exit 1
         ;;
         
 
